@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 
 missing = False
 failed = False
-for module, minimum in {"pairing-native": 2, "adb": 1, "storage": 2, "fixture": 2, "app": 10}.items():
+for module, minimum in {"pairing-native": 2, "adb": 1, "storage": 2, "fixture": 2, "app": 11}.items():
     executed = 0
     for report in Path(module, "build/outputs/androidTest-results").glob("**/TEST-*.xml"):
         root = ET.parse(report).getroot()

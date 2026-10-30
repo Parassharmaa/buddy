@@ -314,7 +314,16 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                 )
             )
         }
-        viewModelScope.launch { persist() }
+        val stopped = _state.value.conversation
+        viewModelScope.launch {
+            try {
+                persist(stopped)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "Stopped, but the local run record could not be saved.") }
+            }
+        }
     }
     fun newChat() {
         if (_state.value.active) return
@@ -370,8 +379,7 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     override fun onCleared() {
         client.close()
     }
-    private suspend fun persist() = persistence.withLock {
-        val conversation = _state.value.conversation
+    private suspend fun persist(conversation: Conversation = _state.value.conversation) = persistence.withLock {
         if (conversation.messages.isNotEmpty()) {
             store.put(
                 "conversation:${conversation.id}",
