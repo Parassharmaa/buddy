@@ -12,6 +12,7 @@ import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.model.ModelClient
 import dev.buddy.storage.EncryptedStore
+import dev.buddy.storage.HistoryRetention
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,7 @@ data class BuddyState(
     val active: Boolean = false,
     val draft: String = "",
     val loaded: Boolean = false,
+    val retention: HistoryRetention = HistoryRetention.THIRTY_DAYS,
     val error: String? = null
 )
 private fun newConversation() = Conversation(UUID.randomUUID().toString(), "New conversation")
@@ -67,6 +69,8 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                         localHttp = saved?.localHttp ?: false
                     )
                 }
+                val retention = store.historyRetention()
+                _state.update { it.copy(retention = retention) }
                 store.expireHistory()
                 var firstLoad = true
                 store.observe("conversation").collect { rows ->
@@ -90,7 +94,16 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                     }
                     val persistRecovery = firstLoad
                     firstLoad = false
-                    _state.update { current -> current.copy(history = recovered, loaded = true) }
+                    _state.update { current ->
+                        val removed = !current.active &&
+                            current.history.any { it.id == current.conversation.id } &&
+                            recovered.none { it.id == current.conversation.id }
+                        current.copy(
+                            history = recovered,
+                            loaded = true,
+                            conversation = if (removed) newConversation() else current.conversation
+                        )
+                    }
                     if (persistRecovery) {
                         recovered.zip(conversations).filter { it.first != it.second }.forEach { (fixed, _) ->
                             store.put("conversation:${fixed.id}", "conversation", json.encodeToString(fixed))
@@ -333,6 +346,19 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
         if (_state.value.active) return
         val saved = _state.value.history.firstOrNull { it.id == id } ?: return
         _state.update { it.copy(conversation = saved, draft = "", error = null) }
+    }
+    fun setHistoryRetention(retention: HistoryRetention) {
+        if (!_state.value.loaded || _state.value.active) return
+        viewModelScope.launch {
+            try {
+                persistence.withLock { store.setHistoryRetention(retention) }
+                _state.update { it.copy(retention = retention) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "History retention could not be changed. Try again.") }
+            }
+        }
     }
     fun deleteAll() {
         stop()

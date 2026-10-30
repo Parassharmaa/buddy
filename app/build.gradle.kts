@@ -39,6 +39,7 @@ android {
     }
 }
 dependencies {
+    implementation(libs.work.runtime)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.test.junit)
     androidTestImplementation(libs.junit)

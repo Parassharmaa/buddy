@@ -62,6 +62,13 @@ abstract class BuddyDatabase : RoomDatabase() {
     abstract fun records(): RecordDao
 }
 
+enum class HistoryRetention(val days: Int?) {
+    ONE_DAY(1),
+    SEVEN_DAYS(7),
+    THIRTY_DAYS(30),
+    KEEP_UNTIL_DELETED(null)
+}
+
 class EncryptedStore(context: Context) :
     ActionJournal,
     java.io.Closeable {
@@ -110,8 +117,15 @@ class EncryptedStore(context: Context) :
     }.flowOn(Dispatchers.IO)
     suspend fun remove(id: String) = dao.remove(id)
     suspend fun clear() = dao.clear()
-    suspend fun expireHistory() {
-        val cutoff = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
+    suspend fun historyRetention(): HistoryRetention = get("history-retention")?.let(HistoryRetention::valueOf)
+        ?: HistoryRetention.THIRTY_DAYS
+    suspend fun setHistoryRetention(retention: HistoryRetention) = database.withTransaction {
+        put("history-retention", "settings", retention.name)
+        expireHistory()
+    }
+    suspend fun expireHistory() = database.withTransaction {
+        val days = historyRetention().days ?: return@withTransaction
+        val cutoff = System.currentTimeMillis() - days.toLong() * 24 * 60 * 60 * 1000
         dao.expire("conversation", cutoff)
         // Action records and unresolved barriers must survive ordinary history retention.
     }

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
@@ -33,13 +34,16 @@ class SetupUiTest {
         screenshot("02-model-setup")
         compose.onNodeWithText("Back to settings").performClick()
         compose.onNodeWithText("Privacy").performClick()
-        compose.onNodeWithText("Delete all local data").assertIsDisplayed()
-        compose.onNodeWithText("Back to settings").assertIsDisplayed()
+        compose.onNodeWithText("Conversation history").assertIsDisplayed()
+        compose.onNodeWithText("1 day").performScrollTo().performClick()
+        compose.onNodeWithText("Shorten history retention?").assertIsDisplayed()
+        compose.onNodeWithText("Keep setting").performClick()
+        compose.onNodeWithText("Delete all local data").performScrollTo().assertIsDisplayed()
         screenshot("03-privacy")
         compose.onNodeWithText("Delete all local data").performClick()
         compose.onNodeWithText("Keep data").performClick()
         compose.onNodeWithText("Delete all local data").assertIsDisplayed()
-        compose.onNodeWithText("Back to settings").performClick()
+        compose.onNodeWithText("Back to settings").performScrollTo().performClick()
         compose.onNodeWithText("Phone connection").performClick()
         compose.onNodeWithText("Not connected").assertIsDisplayed()
         screenshot("04-phone-setup")

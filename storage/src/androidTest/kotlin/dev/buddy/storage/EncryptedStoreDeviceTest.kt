@@ -1,5 +1,6 @@
 package dev.buddy.storage
 
+import android.database.sqlite.SQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.core.ActionProposal
@@ -31,6 +32,46 @@ class EncryptedStoreDeviceTest {
             }
             store.clear()
             assertNull(store.get("fixture-secret"))
+        }
+    }
+
+    @Test fun retentionDeletesOnlyExpiredConversationsAndPersistsKeepUntilDeleted() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        EncryptedStore(context).use { store ->
+            store.clear()
+            try {
+                store.put("old-chat", "conversation", "synthetic old history")
+                store.put("recent-chat", "conversation", "synthetic recent history")
+                store.put("barrier:old-effect", "barrier", "unresolved")
+                SQLiteDatabase.openDatabase(
+                    context.getDatabasePath("buddy.db").path,
+                    null,
+                    SQLiteDatabase.OPEN_READWRITE
+                )
+                    .use { database ->
+                        database.execSQL(
+                            "UPDATE records SET updatedAt = ? WHERE id IN ('old-chat', 'barrier:old-effect')",
+                            arrayOf(System.currentTimeMillis() - 10L * 24 * 60 * 60 * 1000)
+                        )
+                    }
+                store.setHistoryRetention(HistoryRetention.KEEP_UNTIL_DELETED)
+                store.expireHistory()
+                assertEquals("synthetic old history", store.get("old-chat"))
+                store.setHistoryRetention(HistoryRetention.SEVEN_DAYS)
+                assertNull(store.get("old-chat"))
+                assertEquals("synthetic recent history", store.get("recent-chat"))
+                assertTrue(store.unresolved("old-effect"))
+                assertEquals(HistoryRetention.SEVEN_DAYS, store.historyRetention())
+            } finally {
+                store.clear()
+            }
+        }
+        EncryptedStore(context).use { store ->
+            store.setHistoryRetention(HistoryRetention.KEEP_UNTIL_DELETED)
+        }
+        EncryptedStore(context).use { store ->
+            assertEquals(HistoryRetention.KEEP_UNTIL_DELETED, store.historyRetention())
+            store.clear()
         }
     }
 

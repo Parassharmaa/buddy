@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +32,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.buddy.BuddyState
 import dev.buddy.BuddyViewModel
+import dev.buddy.storage.HistoryRetention
 
 @Composable internal fun SettingsScreen(state: BuddyState, model: BuddyViewModel) {
     var section by rememberSaveable { mutableStateOf("Overview") }
@@ -163,8 +168,9 @@ import dev.buddy.BuddyViewModel
                     "Model keys, conversations and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
                 )
                 Text(
-                    "Local history expires after 30 days. Deleting local data does not delete copies retained by your model provider or Android’s paired debugging identity."
+                    "Local deletion does not delete copies retained by your model provider or Android’s paired debugging identity."
                 )
+                HistoryRetentionSettings(state.retention, state.loaded && !state.active, model::setHistoryRetention)
                 var confirm by remember { mutableStateOf(false) }
                 OutlinedButton(onClick = { confirm = true }) { Text("Delete all local data") }
                 if (confirm) {
@@ -287,4 +293,53 @@ import dev.buddy.BuddyViewModel
         Text(if (state.testingModel) "Testing model" else "Save and test model")
     }
     Text(state.modelStatus)
+}
+
+@Composable private fun HistoryRetentionSettings(
+    retention: HistoryRetention,
+    enabled: Boolean,
+    onSelect: (HistoryRetention) -> Unit
+) {
+    var pending by remember { mutableStateOf<HistoryRetention?>(null) }
+    fun label(value: HistoryRetention) = value.days?.let { if (it == 1) "1 day" else "$it days" }
+        ?: "Keep until deleted"
+    Text("Conversation history", style = MaterialTheme.typography.titleMedium)
+    Text("Automatic cleanup follows this setting. Unresolved action records are kept for recovery.")
+    Column(Modifier.selectableGroup()) {
+        HistoryRetention.entries.forEach { option ->
+            Row(
+                Modifier.fillMaxWidth().selectable(
+                    selected = option == retention,
+                    enabled = enabled,
+                    role = Role.RadioButton,
+                    onClick = {
+                        if ((option.days ?: Int.MAX_VALUE) < (retention.days ?: Int.MAX_VALUE)) {
+                            pending = option
+                        } else {
+                            onSelect(option)
+                        }
+                    }
+                ).padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = option == retention, onClick = null, enabled = enabled)
+                Spacer(Modifier.width(12.dp))
+                Text(label(option))
+            }
+        }
+    }
+    pending?.let { selected ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text("Shorten history retention?") },
+            text = { Text("Conversations older than ${label(selected)} will be deleted from this phone now.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pending = null
+                    onSelect(selected)
+                }) { Text("Delete older history") }
+            },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Keep setting") } }
+        )
+    }
 }

@@ -1,13 +1,18 @@
 package dev.buddy
 
+import android.database.sqlite.SQLiteDatabase
+import android.os.Build
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.connection.PhoneConnection
+import dev.buddy.core.ChatMessage
 import dev.buddy.core.Conversation
 import dev.buddy.core.ModelConfig
 import dev.buddy.core.RunState
 import dev.buddy.storage.EncryptedStore
+import dev.buddy.storage.HistoryRetention
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -19,12 +24,15 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ChatRecoveryDeviceTest {
     @Test fun stoppingThenOpeningANewChatPersistsTheCancelledRun() = runBlocking {
+        requireDisposableEmulator()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         EncryptedStore(context).use { store ->
             val savedConfig = store.get("model-config")
@@ -73,5 +81,67 @@ class ChatRecoveryDeviceTest {
                 }
             }
         }
+    }
+
+    @Test fun shorteningRetentionRemovesTheSelectedExpiredConversationFromMemory() = runBlocking {
+        requireDisposableEmulator()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val conversation =
+            Conversation(
+                UUID.randomUUID().toString(),
+                "Expired fixture",
+                listOf(ChatMessage("user", "Synthetic history"))
+            )
+        val recordId = "conversation:${conversation.id}"
+        val models = ViewModelStore()
+        EncryptedStore(context).use { store ->
+            val previousRetention = store.historyRetention()
+            try {
+                store.setHistoryRetention(HistoryRetention.KEEP_UNTIL_DELETED)
+                store.put(recordId, "conversation", Json.encodeToString(conversation))
+                SQLiteDatabase.openDatabase(
+                    context.getDatabasePath("buddy.db").path,
+                    null,
+                    SQLiteDatabase.OPEN_READWRITE
+                )
+                    .use { database ->
+                        database.execSQL(
+                            "UPDATE records SET updatedAt = ? WHERE id = ?",
+                            arrayOf<Any>(System.currentTimeMillis() - 10L * 24 * 60 * 60 * 1000, recordId)
+                        )
+                    }
+                val model = withContext(Dispatchers.Main) {
+                    BuddyViewModel(store, PhoneConnection(context)).also { models.put("chat", it) }
+                }
+                withTimeout(5_000) {
+                    model.state.first {
+                        it.loaded &&
+                            it.history.any { row -> row.id == conversation.id }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    model.openConversation(conversation.id)
+                    assertEquals(conversation.id, model.state.value.conversation.id)
+                    model.setHistoryRetention(HistoryRetention.SEVEN_DAYS)
+                }
+                val result = withTimeout(5_000) {
+                    model.state.first {
+                        it.retention == HistoryRetention.SEVEN_DAYS &&
+                            it.history.none { row -> row.id == conversation.id } &&
+                            it.conversation.id != conversation.id
+                    }
+                }
+                assertEquals(emptyList<ChatMessage>(), result.conversation.messages)
+                assertNull(store.get(recordId))
+            } finally {
+                withContext(Dispatchers.Main) { models.clear() }
+                store.remove(recordId)
+                store.setHistoryRetention(previousRetention)
+            }
+        }
+    }
+    private fun requireDisposableEmulator() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
+        assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
     }
 }
