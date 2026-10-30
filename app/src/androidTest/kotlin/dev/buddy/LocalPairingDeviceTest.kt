@@ -57,11 +57,17 @@ class LocalPairingDeviceTest {
         var developerTitleSeen = false
         var scrollableSeen = false
         var scrollAttempts = 0
+        var deepestNode = 0
+        var treeLimited = false
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo, depth: Int) {
-                if (depth > 20 || result.size >= 500) return
+                deepestNode = maxOf(deepestNode, depth)
+                if (depth > 64 || result.size >= 2000) {
+                    treeLimited = true
+                    return
+                }
                 result += node
                 for (index in 0 until node.childCount) node.getChild(index)?.let { visit(it, depth + 1) }
             }
@@ -254,7 +260,7 @@ class LocalPairingDeviceTest {
                     "confirmation=$sawConfirmation; allowed=$allowedConfirmation; " +
                     "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible; " +
                     "supported=$wifiSupported; launched=$settingsLaunched; developerTitle=$developerTitleSeen; " +
-                    "scrollable=$scrollableSeen; scrolls=$scrollAttempts",
+                    "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited",
                 failure
             )
         } finally {

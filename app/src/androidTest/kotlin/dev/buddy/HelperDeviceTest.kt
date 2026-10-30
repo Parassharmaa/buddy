@@ -120,12 +120,13 @@ class HelperDeviceTest {
             connected.returnFixture(lease, token, UUID.randomUUID().toString())
             node { it.text?.toString() == "Sent to Alice: $text" }
             stage = "foreign_activity_blocks_input"
-            ParcelFileDescriptor.AutoCloseInputStream(
+            val launch = ParcelFileDescriptor.AutoCloseInputStream(
                 automation.executeShellCommand(
-                    "am start -W --display $display --activity-new-task --activity-multiple-task " +
+                    "am start -W --display $display -f 0x18000000 " +
                         "-n dev.buddy/.MainActivity"
                 )
-            ).use { it.readNBytes(4096) }
+            ).use { it.readNBytes(4096).toString(Charsets.UTF_8) }
+            check(launch.contains("Status: ok")) { "Controlled foreign-activity launch was rejected" }
             withTimeout(5_000) {
                 while (automation.windowsOnAllDisplays.get(display).orEmpty().none {
                         it.root?.packageName?.toString() == context.packageName

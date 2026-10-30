@@ -39,8 +39,7 @@ class FocusIsolationDeviceTest {
         fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
             automation.executeShellCommand(command)
         ).use {
-            it.readNBytes(4096)
-            Unit
+            it.readNBytes(4096).toString(Charsets.UTF_8)
         }
         val ui = FixtureUi(automation)
         var stage = "bootstrap"
@@ -56,10 +55,11 @@ class FocusIsolationDeviceTest {
                         val token = helper.createDisplay(lease, 720, 1280, 240, frames.surface)
                         val display = helper.launchFixture(lease, token, UUID.randomUUID().toString())
                         stage = "physical_fixture"
-                        shell(
-                            "am start -W --display 0 --activity-new-task --activity-multiple-task " +
+                        val launch = shell(
+                            "am start -W --display 0 -f 0x18000000 " +
                                 "-n dev.buddy.fixture/.FixtureActivity"
                         )
+                        check(launch.contains("Status: ok")) { "Physical fixture launch was rejected" }
                         val physical = ui.node(0) { it.isEditable }
                         check(physical.isFocused || physical.performAction(AccessibilityNodeInfo.ACTION_FOCUS))
                         check(physical.performAction(AccessibilityNodeInfo.ACTION_CLICK))
