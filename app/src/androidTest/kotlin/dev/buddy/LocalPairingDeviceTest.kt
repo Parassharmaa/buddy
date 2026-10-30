@@ -67,6 +67,9 @@ class LocalPairingDeviceTest {
         var scrollAttempts = 0
         var deepestNode = 0
         var treeLimited = false
+        var wirelessPageSeen = false
+        var pairingRowSeen = false
+        var masterToggled = false
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -131,8 +134,8 @@ class LocalPairingDeviceTest {
             withTimeout(10_000) {
                 while (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) delay(200)
             }
-            stage = "enable_wireless_debugging"
-            shell("settings put global adb_wifi_enabled 1")
+            stage = "reset_wireless_debugging"
+            shell("settings put global adb_wifi_enabled 0")
             stage = "open_wireless_settings"
             // Newer adbd reports its TLS port over the system socket rather than the old
             // service.adb.tls.port property. Read the public Settings screen on every API.
@@ -168,6 +171,37 @@ class LocalPairingDeviceTest {
                         }
                     }
                     delay(100)
+                }
+            }
+            stage = "enable_wireless_detail_page"
+            withTimeout(15_000) {
+                while (true) {
+                    allowNetwork()
+                    val controls = nodes()
+                    val title = controls.firstOrNull {
+                        it.packageName?.toString() == "com.android.settings" &&
+                            it.text?.toString()?.contains("Use wireless debugging", ignoreCase = true) == true
+                    }
+                    if (title != null) {
+                        wirelessPageSeen = true
+                        val toggle = controls.firstOrNull {
+                            it.packageName?.toString() == "com.android.settings" && it.isCheckable && it.isEnabled
+                        }
+                        if (toggle != null && !toggle.isChecked && !masterToggled) {
+                            click(toggle)
+                            masterToggled = true
+                        }
+                    } else {
+                        // A disabled primary-switch row can enable its switch before opening the fragment.
+                        device.findObject(
+                            By.pkg("com.android.settings").text("Wireless debugging").displayId(Display.DEFAULT_DISPLAY)
+                        )?.click()
+                    }
+                    pairingRowSeen = controls.any {
+                        it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true
+                    }
+                    if (wirelessPageSeen && pairingRowSeen) break
+                    delay(200)
                 }
             }
             stage = "wireless_connection_port"
@@ -267,7 +301,8 @@ class LocalPairingDeviceTest {
                     "confirmation=$sawConfirmation; allowed=$allowedConfirmation; " +
                     "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible; " +
                     "supported=$wifiSupported; launched=$settingsLaunched; developerTitle=$developerTitleSeen; " +
-                    "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited",
+                    "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited; " +
+                    "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled",
                 failure
             )
         } finally {
@@ -275,7 +310,15 @@ class LocalPairingDeviceTest {
             helper?.let { runCatching { it.disconnect() } }
             BootstrapProvider.clear()
             identity.forget()
-            if (original != "1") shell("settings put global adb_wifi_enabled 0")
+            shell(
+                if (original ==
+                    "1"
+                ) {
+                    "settings put global adb_wifi_enabled 1"
+                } else {
+                    "settings put global adb_wifi_enabled 0"
+                }
+            )
             configuration.setWaitForIdleTimeout(originalIdleTimeout)
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
         }
