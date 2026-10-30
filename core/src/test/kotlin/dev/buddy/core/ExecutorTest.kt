@@ -1,5 +1,10 @@
 package dev.buddy.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -170,5 +175,58 @@ class ExecutorTest {
         assertTrue(!dispatched)
         assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
         assertTrue(!journal.unresolved(action.operationKey))
+    }
+
+    @Test fun stoppingAfterDispatchPersistsUncertaintyEvenWhenTheJournalMustSuspend() = runTest {
+        val started = CompletableDeferred<Unit>()
+        var uncertain = false
+        val journal = object : ActionJournal {
+            override suspend fun unresolved(operationKey: String) = uncertain
+            override suspend fun begin(record: ActionRecord, approval: Approval?) = Unit
+            override suspend fun update(record: ActionRecord) = Unit
+            override suspend fun markUncertain(record: ActionRecord) {
+                delay(10)
+                uncertain = true
+            }
+        }
+        val executor = ActionExecutor(journal) { 2_000 }
+        val running = launch {
+            executor.execute(action, observation, approval, { gate }, {
+                started.complete(Unit)
+                awaitCancellation()
+            }, {
+                fail("Cancelled effect must not be verified")
+                emptyList()
+            })
+        }
+        started.await()
+        running.cancelAndJoin()
+        assertTrue(uncertain)
+        val again = executor.execute(
+            action.copy(id = "retry", runId = "another-run"),
+            observation,
+            approval,
+            { gate },
+            { fail("Must not replay an uncertain effect") },
+            { listOf("e") }
+        )
+        assertTrue(again is ExecutionResult.Blocked)
+    }
+
+    @Test fun verificationStorageFailureCannotReportSuccessOrReplayTheEffect() = runTest {
+        val journal = Journal()
+        val executor = ActionExecutor(journal) { 2_000 }
+        var writes = 0
+        val result = executor.execute(action, observation, approval, { gate }, { writes++ }, {
+            throw java.io.IOException("Evidence unavailable")
+        })
+        assertEquals(ExecutionResult.Uncertain, result)
+        assertTrue(journal.records.none { it.state == DispatchState.VERIFIED })
+        assertTrue(
+            executor.execute(action.copy(id = "retry"), observation, approval, { gate }, { writes++ }, {
+                listOf("e")
+            }) is ExecutionResult.Blocked
+        )
+        assertEquals(1, writes)
     }
 }
