@@ -41,6 +41,7 @@ android {
 dependencies {
     implementation(libs.work.runtime)
     androidTestImplementation(libs.test.runner)
+    androidTestImplementation(libs.test.uiautomator)
     androidTestImplementation(libs.test.junit)
     androidTestImplementation(libs.junit)
     testImplementation(libs.robolectric)

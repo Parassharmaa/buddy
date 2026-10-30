@@ -7,6 +7,10 @@ import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Configurator
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiDevice
 import dev.buddy.adb.AdbIdentity
 import dev.buddy.adb.AdbTransport
 import dev.buddy.adb.BootstrapCommand
@@ -35,6 +39,10 @@ class LocalPairingDeviceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val automation = instrumentation.uiAutomation
         val originalFlags = automation.serviceInfo.flags
+        val configuration = Configurator.getInstance()
+        val originalIdleTimeout = configuration.waitForIdleTimeout
+        configuration.setWaitForIdleTimeout(500)
+        val device = UiDevice.getInstance(instrumentation)
         automation.serviceInfo = automation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
@@ -133,34 +141,33 @@ class LocalPairingDeviceTest {
             settingsLaunched = shell("am start -W -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS")
                 .contains("Status: ok", ignoreCase = true)
             var forward = true
-            withTimeout(10_000) {
+            withTimeout(15_000) {
                 while (true) {
                     allowNetwork()
                     val controls = nodes()
                     developerTitleSeen = developerTitleSeen || controls.any {
                         it.text?.toString()?.contains("Developer options", ignoreCase = true) == true
                     }
-                    val item = controls.firstOrNull {
-                        it.packageName?.toString() == "com.android.settings" && it.isVisibleToUser &&
-                            it.text?.toString()?.contains("Wireless debugging", ignoreCase = true) == true
-                    }
+                    val item = device.findObject(
+                        By.pkg(
+                            "com.android.settings"
+                        ).textContains("Wireless debugging").displayId(Display.DEFAULT_DISPLAY)
+                    )
                     if (item != null) {
-                        click(item)
+                        item.click()
                         break
                     }
-                    controls.firstOrNull {
-                        it.isScrollable && it.packageName?.toString() == "com.android.settings"
-                    }?.let { scrollable ->
+                    device.findObject(
+                        By.pkg("com.android.settings").scrollable(true).displayId(Display.DEFAULT_DISPLAY)
+                    )?.let { scrollable ->
                         scrollableSeen = true
                         scrollAttempts++
-                        val action = if (forward) {
-                            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
-                        } else {
-                            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                        // Wait for each gesture to settle and overlap pages so rows cannot be skipped.
+                        if (!scrollable.scroll(if (forward) Direction.DOWN else Direction.UP, 0.75f)) {
+                            forward = !forward
                         }
-                        if (!scrollable.performAction(action)) forward = !forward
                     }
-                    delay(400)
+                    delay(100)
                 }
             }
             stage = "wireless_connection_port"
@@ -269,6 +276,7 @@ class LocalPairingDeviceTest {
             BootstrapProvider.clear()
             identity.forget()
             if (original != "1") shell("settings put global adb_wifi_enabled 0")
+            configuration.setWaitForIdleTimeout(originalIdleTimeout)
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
         }
     }

@@ -43,6 +43,10 @@ class FocusIsolationDeviceTest {
         }
         val ui = FixtureUi(automation)
         var stage = "bootstrap"
+        var virtualWindows = 0
+        var virtualRoots = 0
+        var virtualEditorSeen = false
+        var draftAccepted = false
         try {
             AuthenticatedHelperFixture.start(instrumentation.targetContext, automation).use { fixture ->
                 FixtureFrameSink().use { frames ->
@@ -66,19 +70,27 @@ class FocusIsolationDeviceTest {
                         stage = "physical_typing_before_virtual_input"
                         typePhysical(automation, "physicalone")
                         ui.node(0) { it.isEditable && it.text?.toString() == "physicalone" }
+                        stage = "virtual_ownership_after_physical_launch"
+                        helper.displayState(lease, token)
+                        stage = "virtual_editor_after_physical_launch"
+                        val windows = automation.windowsOnAllDisplays.get(display).orEmpty()
+                        virtualWindows = windows.size
+                        virtualRoots = windows.count { it.root?.packageName?.toString() == "dev.buddy.fixture" }
+                        val editor = ui.node(display) { it.isEditable }
+                        virtualEditorSeen = true
                         stage = "virtual_unicode_draft"
                         val message = "こんにちは · café"
-                        assertTrue(
-                            ui.node(display) { it.isEditable }.performAction(
-                                AccessibilityNodeInfo.ACTION_SET_TEXT,
-                                Bundle().apply {
-                                    putCharSequence(
-                                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                                        message
-                                    )
-                                }
-                            )
+                        draftAccepted = editor.performAction(
+                            AccessibilityNodeInfo.ACTION_SET_TEXT,
+                            Bundle().apply {
+                                putCharSequence(
+                                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                    message
+                                )
+                            }
                         )
+                        assertTrue(draftAccepted)
+                        stage = "verify_virtual_unicode_draft"
                         ui.node(display) { it.isEditable && it.text?.toString() == message }
                         val send = ui.node(display) { it.text?.toString() == "Send to fixture inbox" }
                         val bounds = Rect().also(send::getBoundsInScreen)
@@ -104,7 +116,11 @@ class FocusIsolationDeviceTest {
                 }
             }
         } catch (failure: Exception) {
-            throw AssertionError("Focus isolation fixture failed at $stage", failure)
+            throw AssertionError(
+                "Focus isolation fixture failed at $stage; virtualWindows=$virtualWindows; " +
+                    "virtualRoots=$virtualRoots; editorSeen=$virtualEditorSeen; draftAccepted=$draftAccepted",
+                failure
+            )
         } finally {
             // Both activities belong to this disposable, network-free test fixture.
             shell("am force-stop dev.buddy.fixture")
