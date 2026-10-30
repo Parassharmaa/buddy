@@ -7,13 +7,20 @@ import java.io.Closeable
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ScheduledFuture
 
-class AdbTransport(private val identity: AdbIdentity) : Closeable {
+class AdbTransport internal constructor(private val identity: AdbIdentity, private val timeoutMs: Long) : Closeable {
+    constructor(identity: AdbIdentity) : this(identity, 20_000)
+    init {
+        require(timeoutMs in 1..30_000)
+    }
+
     @Volatile private var socket: Socket? = null
     private val socketLock = Any()
     private var rawSocket: Socket? = null
     private var closed = false
     private var started = false
+    private var expiry: ScheduledFuture<*>? = null
     private var maxPayload = 4096
 
     private fun own(value: Socket) = synchronized(socketLock) {
@@ -29,6 +36,7 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
         synchronized(socketLock) {
             check(!closed && !started)
             started = true
+            expiry = SocketDeadlines.schedule(timeoutMs, ::close)
         }
         val raw = Socket()
         own(raw)
@@ -126,6 +134,8 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
     override fun close() {
         val sockets = synchronized(socketLock) {
             closed = true
+            expiry?.cancel(false)
+            expiry = null
             listOfNotNull(rawSocket, socket).distinct().also {
                 rawSocket = null
                 socket = null

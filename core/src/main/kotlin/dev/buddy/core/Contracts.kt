@@ -113,5 +113,12 @@ data class ActionRecord(
 @Serializable
 data class Barrier(val operationKey: String, val runId: String, val reason: String)
 
-fun sha256(value: String): String = java.security.MessageDigest.getInstance("SHA-256")
-    .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+fun sha256(value: String): String {
+    // UTF-8's replacement mode would give an incomplete surrogate the same hash as "?".
+    val encoded = Charsets.UTF_8.newEncoder()
+        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        .encode(java.nio.CharBuffer.wrap(value))
+    val digest = java.security.MessageDigest.getInstance("SHA-256").apply { update(encoded) }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}

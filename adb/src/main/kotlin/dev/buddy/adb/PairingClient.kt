@@ -9,6 +9,7 @@ import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.Socket
+import java.util.concurrent.ScheduledFuture
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
@@ -22,6 +23,7 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
     private var rawSocket: Socket? = null
     private var closed = false
     private var started = false
+    private var expiry: ScheduledFuture<*>? = null
 
     private fun own(value: Socket) = synchronized(socketLock) {
         if (closed) {
@@ -36,8 +38,14 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
         synchronized(socketLock) {
             check(!closed && !started)
             started = true
+            expiry = SocketDeadlines.schedule(20_000, ::close)
         }
-        val code = normalizedPairingCode(rawCode)
+        val code = try {
+            normalizedPairingCode(rawCode)
+        } catch (failure: Exception) {
+            close()
+            throw failure
+        }
         var native: NativeSpake2? = null
         var secret = byteArrayOf()
         var key = byteArrayOf()
@@ -114,6 +122,8 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
     override fun close() {
         val sockets = synchronized(socketLock) {
             closed = true
+            expiry?.cancel(false)
+            expiry = null
             listOfNotNull(rawSocket, socket).distinct().also {
                 rawSocket = null
                 socket = null
