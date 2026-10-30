@@ -37,7 +37,7 @@ jobs:
         with:
           cmdline-tools-version: '16111833'
           log-accepted-android-sdk-licenses: false
-          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2'
+          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2 emulator system-images;android-${{ matrix.image-api }};${{ matrix.target }};x86_64'
       - name: Native protocol tests
         run: bash scripts/check-native.sh
       - name: Use one debug signing identity for this test run
@@ -67,17 +67,9 @@ jobs:
         timeout-minutes: 10
         env:
           BUDDY_EXPECTED_PAGE_SIZE: ${{ matrix.page-size }}
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: ${{ matrix.image-api }}
-          target: ${{ matrix.target }}
-          arch: x86_64
-          profile: pixel_7
-          emulator-build: '16696583'
-          emulator-boot-timeout: 300
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -memory 4096 -cores 2
-          disable-animations: true
-          script: bash scripts/check-device.sh
+          BUDDY_IMAGE_API: ${{ matrix.image-api }}
+          BUDDY_IMAGE_TARGET: ${{ matrix.target }}
+        run: bash scripts/run-emulator.sh
 
       - name: Report device test results
         if: always() && steps.device.outcome != 'skipped'
