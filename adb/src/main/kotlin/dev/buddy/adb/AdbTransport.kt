@@ -113,7 +113,7 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
     }
 }
 
-class BootstrapCommand private constructor(internal val value: String) {
+class BootstrapCommand private constructor(val value: String) {
     companion object {
         fun helper(
             apk: String,

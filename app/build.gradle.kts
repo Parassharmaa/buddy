@@ -9,6 +9,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         applicationId = "dev.buddy"
         targetSdk = 37
         versionCode = 1
@@ -26,6 +27,9 @@ android {
     buildFeatures { compose = true }
 }
 dependencies {
+    androidTestImplementation(libs.test.runner)
+    androidTestImplementation(libs.test.junit)
+    androidTestImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.test.core)
     testImplementation(libs.test.junit)

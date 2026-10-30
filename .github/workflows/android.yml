@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          persist-credentials: false
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -22,7 +23,7 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          cmdline-tools-version: '16717390'
+          cmdline-tools-version: '16111833'
           log-accepted-android-sdk-licenses: false
           packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2'
       - name: Native protocol tests
@@ -36,3 +37,22 @@ jobs:
             app/build/outputs/apk/debug/*.apk
             fixture/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Enable KVM for fixture probes
+        run: sudo chmod a+rw /dev/kvm
+      - name: Android fixture probes on API 36
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-build: '16696583'
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -memory 2048 -cores 2
+          disable-animations: true
+          script: |
+            adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
+            adb shell input keyevent KEYCODE_WAKEUP
+            adb shell wm dismiss-keyguard
+            ./gradlew --no-daemon :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest

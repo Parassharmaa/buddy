@@ -55,7 +55,7 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
         }
         val nonce = Base64.decode(nonceLine, Base64.NO_WRAP)
         require(nonce.size == 32)
-        val helper = if (revalidate) null else ShellHelper(context, expectedUid)
+        val helper = if (revalidate) null else ShellHelper(context, expectedUid).also { it.authorizedNow() }
         val extras = Bundle().apply {
             putByteArray("nonce", nonce)
             putInt("protocol", ShellProtocol.VERSION)
@@ -73,7 +73,6 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
         System.out.flush()
         if (helper != null) {
             // A fresh UID-2000 callback establishes the first bounded authorization proof.
-            helper.authorizedNow()
             Looper.loop()
         }
     } catch (_: Throwable) {

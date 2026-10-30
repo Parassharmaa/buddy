@@ -63,7 +63,12 @@ abstract class BuddyDatabase : RoomDatabase() {
     abstract fun records(): RecordDao
 }
 
-class EncryptedStore(context: Context) : ActionJournal {
+class EncryptedStore(context: Context) :
+    ActionJournal,
+    java.io.Closeable {
+    override fun close() {
+        database.close()
+    }
     private val database = Room.databaseBuilder(context, BuddyDatabase::class.java, "buddy.db").build()
     private val dao = database.records()
     private val key: SecretKey by lazy {
