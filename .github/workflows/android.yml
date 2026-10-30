@@ -19,8 +19,10 @@ jobs:
         include:
           - image-api: '36'
             target: google_apis_playstore
+            page-size: '4096'
           - image-api: '37.2'
             target: google_apis_playstore_ps16k
+            page-size: '16384'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,6 +65,8 @@ jobs:
       - name: Android fixture probes on API ${{ matrix.image-api }} user image
         id: device
         timeout-minutes: 10
+        env:
+          BUDDY_EXPECTED_PAGE_SIZE: ${{ matrix.page-size }}
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.image-api }}

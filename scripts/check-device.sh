@@ -4,6 +4,12 @@ if [[ "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != 1 ]]; then
     echo 'Device checks require a disposable Android emulator.' >&2
     exit 1
 fi
+device_page_size="$(adb shell getconf PAGE_SIZE | tr -d '\r')"
+printf 'Device page size: %s\n' "$device_page_size"
+if [[ -n "${BUDDY_EXPECTED_PAGE_SIZE:-}" && "$device_page_size" != "$BUDDY_EXPECTED_PAGE_SIZE" ]]; then
+    echo 'Emulator page size differs from its required test profile.' >&2
+    exit 1
+fi
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 adb shell settings put system screen_off_timeout 1800000
