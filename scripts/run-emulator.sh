@@ -15,7 +15,8 @@ if [[ "$(adb devices)" == *"$ANDROID_SERIAL"* ]]; then
 fi
 "$buddy_sdk/emulator/emulator" -version
 "$buddy_sdk/emulator/emulator" -accel-check
-printf 'no\n' | "$buddy_sdk/cmdline-tools/latest/bin/avdmanager" create avd --force --name buddy-ci \
+buddy_avdmanager="$(command -v avdmanager)"
+printf 'no\n' | "$buddy_avdmanager" create avd --force --name buddy-ci \
     --package "system-images;android-${BUDDY_IMAGE_API:?};${BUDDY_IMAGE_TARGET:?};x86_64" --device pixel_7
 buddy_emulator_log="$RUNNER_TEMP/buddy-emulator.log"
 "$buddy_sdk/emulator/emulator" -avd buddy-ci -port 5554 -accel on -no-window -no-audio \
