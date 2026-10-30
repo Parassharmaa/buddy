@@ -7,6 +7,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         applicationId = "dev.buddy.fixture"
         targetSdk = 37
         versionCode = 1
@@ -23,4 +24,8 @@ android {
 }
 dependencies {
     testImplementation(libs.junit)
+    androidTestImplementation(libs.test.core)
+    androidTestImplementation(libs.test.runner)
+    androidTestImplementation(libs.test.junit)
+    androidTestImplementation(libs.junit)
 }

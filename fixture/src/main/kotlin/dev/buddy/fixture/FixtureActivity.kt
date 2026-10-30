@@ -34,9 +34,12 @@ class FixtureActivity : Activity() {
             id = R.id.fixture_draft_input
         }
         layout.addView(editor)
-        result = text(savedInstanceState?.getString("result") ?: getString(R.string.fixture_empty))
+        result = text(savedInstanceState?.getString("result") ?: getString(R.string.fixture_empty)).apply {
+            id = R.id.fixture_result
+        }
         layout.addView(
             Button(this).apply {
+                id = R.id.fixture_send_button
                 text = getString(R.string.fixture_send)
                 setOnClickListener {
                     result.text =
@@ -51,6 +54,7 @@ class FixtureActivity : Activity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             layout.addView(
                 EditText(this).apply {
+                    id = R.id.fixture_password_input
                     hint = getString(R.string.fixture_password)
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
                     isSaveEnabled = false
@@ -60,6 +64,7 @@ class FixtureActivity : Activity() {
         }
         layout.addView(
             Button(this).apply {
+                id = R.id.fixture_protected_button
                 text = getString(R.string.fixture_protected)
                 setOnClickListener { showProtectedPage() }
             }

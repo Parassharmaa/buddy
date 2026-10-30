@@ -58,7 +58,7 @@ jobs:
             adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
-            ./gradlew --no-daemon --no-parallel --continue -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000 :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+            ./gradlew --no-daemon --no-parallel --continue -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000 :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 
       - name: Report device test results
         if: always() && steps.device.outcome != 'skipped'
