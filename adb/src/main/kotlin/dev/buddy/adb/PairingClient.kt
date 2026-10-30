@@ -21,13 +21,14 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
 
     fun pair(port: LoopbackPort, rawCode: CharSequence): String {
         val code = normalizedPairingCode(rawCode)
-        val tls = LocalTls(identity).connect(port) { socket = it }
-        val native = NativeSpake2()
+        var native: NativeSpake2? = null
         var secret = byteArrayOf()
         var key = byteArrayOf()
         var shared = byteArrayOf()
         var exported = byteArrayOf()
         try {
+            val tls = LocalTls(identity).connect(port) { socket = it }
+            val exchange = NativeSpake2().also { native = it }
             exported = Conscrypt.exportKeyingMaterial(tls, "adb-label\u0000", null, 64)
             secret = ByteArray(code.size + exported.size)
             code.forEachIndexed { index, c -> secret[index] = c.code.toByte() }
@@ -49,8 +50,8 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
                 }
                 return readExactly(input, size)
             }
-            write(0, native.message(secret))
-            shared = native.process(read(0, 32))
+            write(0, exchange.message(secret))
+            shared = exchange.process(read(0, 32))
             // AOSP HKDF-SHA256, empty salt, 16-byte AES key, fixed protocol label.
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
@@ -88,7 +89,7 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
             key.fill(0)
             shared.fill(0)
             exported.fill(0)
-            native.close()
+            native?.close()
             close()
         }
     }
