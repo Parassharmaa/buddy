@@ -1,0 +1,27 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "Buddy"
+include(
+    ":app",
+    ":core",
+    ":adb",
+    ":pairing-native",
+    ":shell-api",
+    ":shell-helper",
+    ":phone",
+    ":storage",
+    ":designsystem",
+    ":fixture"
+)

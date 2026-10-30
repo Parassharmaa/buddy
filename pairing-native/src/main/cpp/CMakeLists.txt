@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(buddy_pairing LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+add_library(spake2 SHARED spake2-c/sha512.c spake2-c/spake2.c spake2_jni.cpp)
+target_include_directories(spake2 PRIVATE spake2-c/include)
+target_compile_options(spake2 PRIVATE -Wall -Wextra -Werror=format -fstack-protector-strong)
+target_link_options(spake2 PRIVATE -Wl,-z,max-page-size=16384 -Wl,-z,relro -Wl,-z,now)
