@@ -45,7 +45,8 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
         approval: Approval?,
         gate: suspend () -> DispatchGate,
         dispatch: suspend () -> Unit,
-        verify: suspend () -> List<String>
+        verify: suspend () -> List<String>,
+        prepare: suspend () -> Unit = {}
     ): ExecutionResult = mutex.withLock {
         if (journal.unresolved(
                 action.operationKey
@@ -98,6 +99,8 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
         journal.begin(record, if (needsApproval) approval else null)
         var dispatchStarted = false
         try {
+            // Read-only target resolution must finish before the final consent and cancellation checks.
+            prepare()
             // Recheck cancellation/lock after durable intent commit and immediately before IPC.
             val finalGate = gate()
             if (finalGate != preflight ||

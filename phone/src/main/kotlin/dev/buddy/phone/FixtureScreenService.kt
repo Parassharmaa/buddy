@@ -98,11 +98,16 @@ class FixtureScreenService : AccessibilityService() {
         val windows = windowsOnAllDisplays.get(scope.displayId).orEmpty()
         lastWindowSummary = "count=${windows.size}; types=${windows.map { it.type }.sorted()}; " +
             "roots=${windows.count { it.root != null }}"
-        var excluded = windows.size != 1 || windows.any { it.type != AccessibilityWindowInfo.TYPE_APPLICATION }
+        var excluded = windows.size != 1 || windows.any {
+            it.type != AccessibilityWindowInfo.TYPE_APPLICATION || it.displayId != scope.displayId
+        }
+        val expectedWindow = windows.singleOrNull()?.id
         var privateInput = false
         val references = linkedMapOf<String, AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
-            if (depth > 20 || references.size >= 256 || node.packageName?.toString() != FIXTURE_PACKAGE) {
+            if (depth > 20 || references.size >= 256 || node.packageName?.toString() != FIXTURE_PACKAGE ||
+                node.windowId != expectedWindow
+            ) {
                 excluded = true
                 return
             }
@@ -121,7 +126,11 @@ class FixtureScreenService : AccessibilityService() {
             for (index in 0 until node.childCount) node.getChild(index)?.let { visit(it, "$path/$index", depth + 1) }
         }
         // Inspect only metadata first. Never request node text on a credential or mixed window.
-        if (!excluded) windows.single().root?.let { visit(it, "0", 0) } ?: run { excluded = true }
+        if (!excluded) {
+            windows.single().root?.let {
+                if (it.window?.displayId == scope.displayId) visit(it, "0", 0) else excluded = true
+            } ?: run { excluded = true }
+        }
         val elements = mutableListOf<UiElement>()
         if (!excluded && !privateInput) {
             for ((id, node) in references) {
@@ -170,8 +179,9 @@ class FixtureScreenService : AccessibilityService() {
         internal fun capture(scope: FixtureDisplayScope, privacy: FixtureWindowPrivacy): FixtureSnapshot =
             requireNotNull(current) { "Enable fixture screen access first" }.snapshot(scope, privacy)
 
-        internal fun edit(snapshot: FixtureSnapshot, nodeId: String, value: String) {
+        internal fun edit(snapshot: FixtureSnapshot, nodeId: String, value: String, displayId: Int) {
             val node = requireNotNull(snapshot.nodes[nodeId])
+            check(displayId > 0 && node.window?.displayId == displayId)
             check(node.isEditable && node.isVisibleToUser && !node.isPassword)
             check(node.packageName?.toString() == FIXTURE_PACKAGE)
             check(

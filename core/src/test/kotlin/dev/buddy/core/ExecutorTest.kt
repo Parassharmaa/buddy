@@ -198,6 +198,25 @@ class ExecutorTest {
         assertEquals(setOf(approval.id), journal.consumed)
     }
 
+    @Test fun approvalExpiringDuringTargetResolutionCannotReachDispatch() = runTest {
+        var clock = 2_000L
+        val journal = Journal()
+        var writes = 0
+        val result = ActionExecutor(journal) { clock }.execute(
+            action,
+            observation,
+            approval.copy(expiresAtElapsedMs = 2_500),
+            { gate },
+            { writes++ },
+            { listOf("e1") },
+            prepare = { clock = 3_000L }
+        )
+        assertEquals(ExecutionResult.ApprovalRequired, result)
+        assertEquals(0, writes)
+        assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertTrue(!journal.unresolved(action.operationKey))
+    }
+
     @Test fun cancellationDuringDurableCommitCannotReachANonSuspendingDispatch() = runTest {
         var writes = 0
         lateinit var journal: Journal

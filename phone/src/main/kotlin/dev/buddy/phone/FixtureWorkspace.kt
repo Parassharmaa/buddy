@@ -197,6 +197,7 @@ class FixtureWorkspace private constructor(
             if (prepared.observation.fingerprint != ownedFingerprint(prepared.observation.nodes)) {
                 return@withLock ExecutionResult.Blocked("Observe the workspace again after takeover")
             }
+            var resolved: FixtureSnapshot? = null
             executor.execute(
                 prepared.proposal,
                 prepared.observation,
@@ -219,7 +220,7 @@ class FixtureWorkspace private constructor(
                         authorizationDeadline = minOf(requested.authorizationDeadline, deadline)
                     )
                 },
-                dispatch = {
+                prepare = {
                     val fresh = snapshot()
                     check(fresh.observation.fingerprint == prepared.observation.fingerprint)
                     check(
@@ -228,12 +229,18 @@ class FixtureWorkspace private constructor(
                     )
                     val node = requireNotNull(fresh.nodes[prepared.nodeId])
                     check(node.isVisibleToUser)
+                    resolved = fresh
+                },
+                dispatch = {
+                    val fresh = requireNotNull(resolved)
+                    val node = requireNotNull(fresh.nodes[prepared.nodeId])
                     currentCoroutineContext().ensureActive()
                     when (prepared.kind) {
                         FixtureActionKind.DRAFT -> FixtureScreenService.edit(
                             fresh,
                             prepared.nodeId,
-                            prepared.proposal.payload
+                            prepared.proposal.payload,
+                            scope.displayId
                         )
 
                         FixtureActionKind.SEND, FixtureActionKind.PROTECTED_PAGE,
