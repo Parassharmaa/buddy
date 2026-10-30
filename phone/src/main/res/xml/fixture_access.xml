@@ -1,7 +1,6 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/fixture_access_description"
-    android:packageNames="dev.buddy.fixture"
-    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowsChanged|typeViewTextChanged"
+    android:accessibilityEventTypes="typeWindowContentChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
     android:canRetrieveWindowContent="true"

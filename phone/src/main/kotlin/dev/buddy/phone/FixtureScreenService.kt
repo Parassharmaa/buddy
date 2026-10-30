@@ -53,11 +53,17 @@ class FixtureScreenService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
+        // Window-change events have no fixture package. Filtering them by package can leave
+        // a newly created display absent from the framework cache. Fetch owned windows fresh.
+        setCacheEnabled(false)
         revision.incrementAndGet()
         current = this
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        revision.incrementAndGet()
+        // Inspect event metadata only, never text or source from another app.
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED || event?.packageName == FIXTURE_PACKAGE) {
+            revision.incrementAndGet()
+        }
     }
     override fun onInterrupt() {
         if (current === this) current = null

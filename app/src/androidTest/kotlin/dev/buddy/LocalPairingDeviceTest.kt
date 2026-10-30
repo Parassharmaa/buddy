@@ -1,9 +1,7 @@
 package dev.buddy
 
-import android.content.Intent
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -94,9 +92,7 @@ class LocalPairingDeviceTest {
             // service.adb.tls.port property. Read the public Settings screen on every API.
             delay(300)
             allowNetwork()
-            context.startActivity(
-                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+            shell("am start -W -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS")
             withTimeout(10_000) {
                 while (true) {
                     allowNetwork()
