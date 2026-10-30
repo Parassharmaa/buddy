@@ -14,6 +14,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.security.SecureRandom
 import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -77,12 +82,20 @@ class FocusIsolationDeviceTest {
                         ui.node(display) { it.isEditable && it.text?.toString() == message }
                         val send = ui.node(display) { it.text?.toString() == "Send to fixture inbox" }
                         val bounds = Rect().also(send::getBoundsInScreen)
-                        stage = "scoped_virtual_send"
-                        helper.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
+                        stage = "concurrent_keyboard_and_virtual_send"
+                        coroutineScope {
+                            val typingStarted = CompletableDeferred<Unit>()
+                            val typing = async(Dispatchers.IO) {
+                                typePhysical(automation, "twothreefour", typingStarted)
+                            }
+                            typingStarted.await()
+                            check(!typing.isCompleted)
+                            helper.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
+                            typing.await()
+                        }
                         ui.node(display) { it.text?.toString() == "Sent to Alice: $message" }
-                        stage = "physical_typing_after_virtual_input"
-                        typePhysical(automation, "two")
-                        ui.node(0) { it.isEditable && it.text?.toString() == "physicalonetwo" }
+                        stage = "verify_physical_keyboard_route"
+                        ui.node(0) { it.isEditable && it.text?.toString() == "physicalonetwothreefour" }
                         ui.node(display) { it.text?.toString() == "Sent to Alice: $message" }
                         assertTrue(owner.isBinderAlive)
                     } finally {
@@ -99,7 +112,11 @@ class FocusIsolationDeviceTest {
         }
     }
 
-    private fun typePhysical(automation: UiAutomation, value: String) {
+    private suspend fun typePhysical(
+        automation: UiAutomation,
+        value: String,
+        started: CompletableDeferred<Unit>? = null
+    ) {
         val events =
             requireNotNull(KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(value.toCharArray()))
         val held = mutableMapOf<Int, KeyEvent>()
@@ -108,7 +125,9 @@ class FocusIsolationDeviceTest {
                 if (event.action == KeyEvent.ACTION_DOWN) held[event.keyCode] = event
                 // KeyCharacterMap uses INVALID_DISPLAY: preserve the global keyboard route.
                 check(automation.injectInputEvent(event, true))
+                started?.complete(Unit)
                 if (event.action == KeyEvent.ACTION_UP) held.remove(event.keyCode)
+                if (started != null) delay(20)
             }
         } finally {
             held.values.forEach { event ->
