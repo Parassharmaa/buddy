@@ -46,6 +46,13 @@ with tempfile.TemporaryFile() as output:
 if found != expected:
     raise SystemExit(f"Optimized APK lost required classes: {sorted(expected - found)}")
 with ZipFile(app) as archive:
+    libraries = {name for name in archive.namelist() if name.startswith("lib/") and name.endswith(".so")}
+    abis = {name.split("/")[1] for name in libraries}
+    if abis != {"arm64-v8a", "x86_64"}:
+        raise SystemExit("Optimized APK contains an unsupported or missing native ABI")
+    for abi in abis:
+        if not {f"lib/{abi}/libbuddy_pairing.so", f"lib/{abi}/libconscrypt_jni.so"} <= libraries:
+            raise SystemExit(f"Optimized APK has an incomplete pairing/TLS stack for {abi}")
     if archive.read("assets/licenses/boringssl.txt") != Path("pairing-native/boringssl/LICENSE").read_bytes():
         raise SystemExit("Packaged native license differs from the pinned source")
 print("Optimized shell entry points, JNI bindings, native license and 16 KB APK alignment verified")

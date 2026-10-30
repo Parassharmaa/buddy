@@ -9,6 +9,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         applicationId = "dev.buddy"
         targetSdk = 37
