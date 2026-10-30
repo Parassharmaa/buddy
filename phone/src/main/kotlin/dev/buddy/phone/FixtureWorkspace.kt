@@ -47,7 +47,8 @@ class FixtureWorkspace private constructor(
     private val token: String,
     private val deadline: Long,
     private val scope: FixtureDisplayScope,
-    private val owner: Binder
+    private val owner: Binder,
+    private val recordEvidence: suspend (Observation) -> Unit
 ) {
     val displayId: Int get() = scope.displayId
     private val closed = AtomicBoolean()
@@ -254,6 +255,8 @@ class FixtureWorkspace private constructor(
                             FixtureActionKind.PROTECTED_PAGE -> after.credentialSurface && after.nodes.isEmpty()
                         }
                         if (verified) {
+                            // Persist the filtered observation before the journal can mark this action verified.
+                            recordEvidence(after)
                             evidence = listOf(after.id)
                             break
                         }
@@ -299,6 +302,7 @@ class FixtureWorkspace private constructor(
             executor: ActionExecutor,
             surface: Surface,
             runId: String,
+            recordEvidence: suspend (Observation) -> Unit,
             width: Int = 720,
             height: Int = 1280,
             dpi: Int = 240
@@ -333,7 +337,8 @@ class FixtureWorkspace private constructor(
                             token,
                             deadline,
                             FixtureDisplayScope(display, width, height, runId),
-                            owner
+                            owner,
+                            recordEvidence
                         ).also { created = it }
                     } catch (failure: Exception) {
                         runCatching { helper.releaseLease(lease) }

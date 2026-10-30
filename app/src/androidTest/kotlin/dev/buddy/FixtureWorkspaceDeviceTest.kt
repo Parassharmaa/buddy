@@ -20,7 +20,10 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -61,7 +64,10 @@ class FixtureWorkspaceDeviceTest {
                             bootstrap.helper,
                             ActionExecutor(store, SystemClock::elapsedRealtime),
                             frames.surface,
-                            UUID.randomUUID().toString()
+                            UUID.randomUUID().toString(),
+                            recordEvidence = { observation ->
+                                store.put("evidence:${observation.id}", "evidence", Json.encodeToString(observation))
+                            }
                         )
                         try {
                             suspend fun ready(predicate: (Observation) -> Boolean): Observation {
@@ -86,7 +92,8 @@ class FixtureWorkspaceDeviceTest {
                                 } catch (timeout: TimeoutCancellationException) {
                                     throw AssertionError(
                                         "Fixture not ready; nodes=${last?.nodes?.size}; " +
-                                            "private=${last?.credentialSurface}; overlay=${last?.excludedOverlay}",
+                                            "private=${last?.credentialSurface}; overlay=${last?.excludedOverlay}; " +
+                                            FixtureScreenService.lastWindowSummary,
                                         lastFailure ?: timeout
                                     )
                                 }
@@ -125,6 +132,9 @@ class FixtureWorkspaceDeviceTest {
                             stage = "approve_fixture_send"
                             val sendResult = workspace.execute(send, approval, gate = { gate() })
                             assertTrue("Send execution: $sendResult", sendResult is ExecutionResult.Verified)
+                            (sendResult as ExecutionResult.Verified).evidenceIds.forEach { id ->
+                                assertNotNull(store.get("evidence:$id"))
+                            }
                             assertEquals("consumed", store.get("consumed:${approval.id}"))
                             stage = "takeover_and_handback"
                             workspace.takeOver()

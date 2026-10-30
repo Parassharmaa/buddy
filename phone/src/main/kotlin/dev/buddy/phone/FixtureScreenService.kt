@@ -75,6 +75,8 @@ class FixtureScreenService : AccessibilityService() {
         check(getSystemService(DisplayManager::class.java).getDisplay(scope.displayId)?.isValid == true)
         val startRevision = revision.get()
         val windows = windowsOnAllDisplays.get(scope.displayId).orEmpty()
+        lastWindowSummary = "count=${windows.size}; types=${windows.map { it.type }.sorted()}; " +
+            "roots=${windows.count { it.root != null }}"
         var excluded = windows.size != 1 || windows.any { it.type != AccessibilityWindowInfo.TYPE_APPLICATION }
         var privateInput = false
         val references = linkedMapOf<String, AccessibilityNodeInfo>()
@@ -138,6 +140,10 @@ class FixtureScreenService : AccessibilityService() {
 
     companion object {
         @Volatile private var current: FixtureScreenService? = null
+
+        // Structural diagnostics only: never include labels, packages, or input values.
+        @Volatile var lastWindowSummary: String = "not captured"
+            private set
         val connected: Boolean get() = current != null
 
         internal fun capture(scope: FixtureDisplayScope): FixtureSnapshot =
