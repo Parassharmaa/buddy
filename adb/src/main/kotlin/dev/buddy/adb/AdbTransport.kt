@@ -115,6 +115,19 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
 
 class BootstrapCommand private constructor(val value: String) {
     companion object {
+        fun forInstalledApp(context: android.content.Context): BootstrapCommand {
+            val info = context.packageManager.getPackageInfo(
+                context.packageName,
+                android.content.pm.PackageManager.PackageInfoFlags.of(
+                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES.toLong()
+                )
+            )
+            val certificate = requireNotNull(info.signingInfo).apkContentsSigners.single()
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(certificate.toByteArray()).joinToString("") { "%02x".format(it) }
+            return helper(context.applicationInfo.sourceDir, context.packageName, context.applicationInfo.uid, digest)
+        }
+
         fun helper(
             apk: String,
             appId: String,

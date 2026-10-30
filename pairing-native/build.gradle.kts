@@ -38,4 +38,4 @@ tasks.withType<Test>().configureEach {
     systemProperty("java.library.path", file("build/host").absolutePath)
 }
 
-android.sourceSets.getByName("androidTest").java.srcDir("src/test/kotlin")
+android.sourceSets.getByName("androidTest").kotlin.srcDir("src/test/kotlin")

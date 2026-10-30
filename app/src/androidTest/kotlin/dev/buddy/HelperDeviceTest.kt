@@ -1,12 +1,13 @@
 package dev.buddy
 
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.media.ImageReader
 import android.os.Binder
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.view.accessibility.AccessibilityNodeInfo
@@ -16,9 +17,9 @@ import dev.buddy.adb.BootstrapCommand
 import dev.buddy.connection.BootstrapProvider
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -41,29 +42,32 @@ class HelperDeviceTest {
         automation.serviceInfo = automation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
-        val info = context.packageManager.getPackageInfo(
-            context.packageName,
-            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
-        )
-        val digest = MessageDigest.getInstance(
-            "SHA-256"
-        ).digest(requireNotNull(info.signingInfo).apkContentsSigners.single().toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        val command = BootstrapCommand.helper(
-            context.applicationInfo.sourceDir,
-            context.packageName,
-            context.applicationInfo.uid,
-            digest
-        )
+        val command = BootstrapCommand.forInstalledApp(context)
         val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
-        val process = automation.executeShellCommandRw(command.value)
+        val process = automation.executeShellCommandRwe(command.value)
         val reader = ImageReader.newInstance(720, 1280, PixelFormat.RGBA_8888, 2)
+        val frames = HandlerThread("fixture-frame-drain").apply { start() }
+        val frameLock = Any()
+        var captureOpen = true
+        val frameCount = AtomicInteger()
+        reader.setOnImageAvailableListener({ source ->
+            synchronized(frameLock) {
+                if (captureOpen) source.acquireLatestImage()?.use { frameCount.incrementAndGet() }
+            }
+        }, Handler(frames.looper))
         var helper: IBuddyHelper? = null
         try {
             ParcelFileDescriptor.AutoCloseOutputStream(process[1]).use {
                 it.write((Base64.encodeToString(pending.nonce, Base64.NO_WRAP) + "\n").toByteArray())
             }
-            val connected = requireNotNull(withTimeout(15_000) { pending.result.await() })
+            val connected = try {
+                requireNotNull(withTimeout(15_000) { pending.result.await() })
+            } catch (failure: Exception) {
+                val errors = ParcelFileDescriptor.AutoCloseInputStream(process[2])
+                val text = errors.readNBytes(minOf(errors.available(), 1024)).toString(Charsets.UTF_8)
+                val reason = text.lineSequence().firstOrNull { it.startsWith("BUDDY_BOOTSTRAP_FAILED:") }
+                throw AssertionError(reason ?: "Helper handoff did not complete", failure)
+            }
             helper = connected
             val capabilities = connected.capabilities()
             assertEquals(ShellProtocol.SHELL_UID, capabilities.getInt("helperUid"))
@@ -80,10 +84,11 @@ class HelperDeviceTest {
                     }
                 )
             }
-            val lease =
-                requireNotNull(
-                    connected.acquireLease(Binder(), ByteArray(32).also(SecureRandom()::nextBytes)).getString("lease")
-                )
+            val challenge = ByteArray(32).also(SecureRandom()::nextBytes)
+            val lease = requireNotNull(connected.acquireLease(Binder(), challenge).getString("lease"))
+            assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
+            connected.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
+            assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
             val token = connected.createDisplay(lease, 720, 1280, 240, reader.surface)
             val display = connected.launchFixture(lease, token, UUID.randomUUID().toString())
             assertTrue(display > 0)
@@ -115,11 +120,17 @@ class HelperDeviceTest {
             val bounds = Rect().also(send::getBoundsInScreen)
             connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
             node { it.text?.toString() == "Sent to Alice: $text" }
+            withTimeout(5_000) { while (frameCount.get() == 0) delay(50) }
             connected.releaseDisplay(lease, token)
             connected.releaseLease(lease)
         } finally {
             helper?.let { runCatching { it.disconnect() } }
-            reader.close()
+            synchronized(frameLock) {
+                captureOpen = false
+                reader.setOnImageAvailableListener(null, null)
+                reader.close()
+            }
+            frames.quitSafely()
             process.forEach { runCatching { it.close() } }
             BootstrapProvider.clear()
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }

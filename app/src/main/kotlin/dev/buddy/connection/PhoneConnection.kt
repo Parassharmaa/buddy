@@ -1,7 +1,6 @@
 package dev.buddy.connection
 
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.SystemClock
 import dev.buddy.adb.AdbIdentity
@@ -11,7 +10,6 @@ import dev.buddy.adb.PairingClient
 import dev.buddy.core.LoopbackPort
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,21 +58,12 @@ class PhoneConnection(private val context: Context) {
             client.connect(LoopbackPort(port))
             _status.value = "Authenticating the phone helper"
             val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
-            val packageInfo = context.packageManager.getPackageInfo(
-                context.packageName,
-                PackageManager.GET_SIGNING_CERTIFICATES
-            )
-            val signature = requireNotNull(packageInfo.signingInfo).apkContentsSigners.single()
-            val digest = MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).joinToString("") {
-                "%02x".format(it)
+            val challenge = pending.nonce.copyOf()
+            try {
+                client.bootstrap(BootstrapCommand.forInstalledApp(context), challenge)
+            } finally {
+                challenge.fill(0)
             }
-            val command = BootstrapCommand.helper(
-                context.applicationInfo.sourceDir,
-                context.packageName,
-                context.applicationInfo.uid,
-                digest
-            )
-            client.bootstrap(command, pending.nonce.copyOf())
             val connected = requireNotNull(withTimeout(5_000) { pending.result.await() })
             val caps = connected.capabilities()
             check(

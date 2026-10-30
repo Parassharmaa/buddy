@@ -28,14 +28,21 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     private var owner: IBinder? = null
     private var leaseDeadline = 0L
     private var authorizationDeadline = 0L
-    private var lastChallenge = byteArrayOf()
+    private val usedChallenges = mutableSetOf<String>()
+    private var idleSince = SystemClock.elapsedRealtime()
     private var stopped = false
     private val death = IBinder.DeathRecipient { synchronized(this) { cleanup() } }
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     init {
         scheduler.scheduleWithFixedDelay({
             synchronized(this) {
-                if (SystemClock.elapsedRealtime() >= minOf(leaseDeadline, authorizationDeadline)) cleanup()
+                val now = SystemClock.elapsedRealtime()
+                if (lease != null && now >= minOf(leaseDeadline, authorizationDeadline)) cleanup()
+                if (owner == null && now - idleSince >= 120_000) {
+                    stopped = true
+                    scheduler.shutdown()
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }
             }
         }, 1, 1, TimeUnit.SECONDS)
     }
@@ -70,10 +77,9 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     }
 
     @Synchronized override fun acquireLease(newOwner: IBinder, challenge: ByteArray): Bundle = asShell {
-        require(challenge.size == 32 && !challenge.contentEquals(lastChallenge))
+        reserveChallenge(challenge)
         check(lease == null)
         check(SystemClock.elapsedRealtime() < authorizationDeadline)
-        lastChallenge = challenge.copyOf()
         owner = newOwner
         newOwner.linkToDeath(death, 0)
         lease = UUID.randomUUID().toString()
@@ -86,8 +92,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
 
     @Synchronized override fun renewLease(value: String, challenge: ByteArray) = asShell {
         validLease(value)
-        require(challenge.size == 32 && !challenge.contentEquals(lastChallenge))
-        lastChallenge = challenge.copyOf()
+        reserveChallenge(challenge)
         leaseDeadline = SystemClock.elapsedRealtime() + ShellProtocol.LEASE_MS
         // Deliberately does not extend authorization freshness. Revalidation is a separate proof.
     }
@@ -191,13 +196,21 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         validLease(value)
         check(!context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
         check(context.getSystemService(PowerManager::class.java).isInteractive)
-        return requireNotNull(displays[token])
+        return requireNotNull(displays[token]).also { check(it.display.display.isValid) }
+    }
+    private fun reserveChallenge(challenge: ByteArray) {
+        require(challenge.size == 32 && usedChallenges.size < 128)
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(challenge)
+        check(usedChallenges.add(android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP))) {
+            "Replayed challenge"
+        }
     }
     private fun reserve(id: String) {
         require(id.length in 1..128 && requests.size < 1024)
         check(requests.putIfAbsent(id, true) == null) { "Duplicate request" }
     }
     private fun cleanup() {
+        if (owner != null || lease != null) idleSince = SystemClock.elapsedRealtime()
         displays.values.forEach { runCatching { it.display.release() } }
         displays.clear()
         owner?.let { runCatching { it.unlinkToDeath(death, 0) } }
