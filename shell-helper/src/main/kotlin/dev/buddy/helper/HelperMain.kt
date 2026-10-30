@@ -61,7 +61,13 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
         val nonce = Base64.decode(nonceLine, Base64.NO_WRAP)
         challenge = nonce
         require(nonce.size == 32)
-        val helper = if (revalidate) null else ShellHelper(context, expectedUid).also { it.authorizedNow() }
+        val helper = if (revalidate) {
+            null
+        } else {
+            ShellHelper(context, expectedUid, expectedDigest).also {
+                it.authorizedNow()
+            }
+        }
         val extras = Bundle().apply {
             putByteArray("nonce", nonce)
             putInt("protocol", ShellProtocol.VERSION)

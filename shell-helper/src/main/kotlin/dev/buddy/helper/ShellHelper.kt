@@ -19,7 +19,8 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal class ShellHelper(private val context: Context, private val appUid: Int) : IBuddyHelper.Stub() {
+internal class ShellHelper(private val context: Context, private val appUid: Int, private val signingDigest: String) :
+    IBuddyHelper.Stub() {
     private data class OwnedDisplay(
         val display: VirtualDisplay,
         val width: Int,
@@ -142,10 +143,32 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         requireNotNull(displays.remove(token)).display.release()
     }
 
+    @Synchronized override fun displayState(value: String, token: String): Bundle = asShell {
+        val display = owned(value, token)
+        Bundle().apply {
+            putInt("displayId", display.display.display.displayId)
+            putInt("width", display.width)
+            putInt("height", display.height)
+        }
+    }
+
     @Synchronized override fun launchFixture(value: String, token: String, requestId: String): Int = asShell {
         val display = owned(value, token)
         check(!display.launchAttempted)
         reserve(requestId)
+        val fixture = context.packageManager.getPackageInfo(
+            "dev.buddy.fixture",
+            android.content.pm.PackageManager.PackageInfoFlags.of(
+                android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES.toLong()
+            )
+        )
+        check(fixture.longVersionCode == 1L)
+        val signer = requireNotNull(fixture.signingInfo).apkContentsSigners.single()
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(signer.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        check(java.security.MessageDigest.isEqual(digest.toByteArray(), signingDigest.toByteArray())) {
+            "Fixture signature mismatch"
+        }
         // Engineering spike launches only Buddy's controlled fixture; arbitrary app launch is gated later.
         display.launchAttempted = true
         display.fixtureRoot = ShellActivityAdapter.launchFixture(display.display.display.displayId, appUid)

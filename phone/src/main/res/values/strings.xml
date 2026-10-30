@@ -1,0 +1,4 @@
+<resources>
+    <string name="fixture_access_name">Buddy fixture screen access</string>
+    <string name="fixture_access_description">Reads and edits only Buddy’s controlled test fixture on its isolated workspace. General phone-agent actions remain disabled. Disable this service at any time in Accessibility settings.</string>
+</resources>

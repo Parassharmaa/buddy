@@ -1,25 +1,15 @@
 package dev.buddy
 
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.media.ImageReader
 import android.os.Binder
 import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
-import android.os.ParcelFileDescriptor
-import android.util.Base64
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.buddy.adb.BootstrapCommand
-import dev.buddy.connection.BootstrapProvider
-import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
 import java.security.SecureRandom
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -41,38 +31,15 @@ class HelperDeviceTest {
         automation.serviceInfo = automation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
-        val command = BootstrapCommand.forInstalledApp(context)
-        val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
-        // UiAutomation tokenizes argv without shell parsing. Installed APK paths contain no whitespace.
-        check(command.arguments.none { argument -> argument.any(Char::isWhitespace) })
-        val process = automation.executeShellCommandRwe(command.arguments.joinToString(" "))
-        val reader = ImageReader.newInstance(720, 1280, PixelFormat.RGBA_8888, 2)
-        val frames = HandlerThread("fixture-frame-drain").apply { start() }
-        val frameLock = Any()
-        var captureOpen = true
-        val frameCount = AtomicInteger()
-        reader.setOnImageAvailableListener({ source ->
-            synchronized(frameLock) {
-                if (captureOpen) source.acquireLatestImage()?.use { frameCount.incrementAndGet() }
-            }
-        }, Handler(frames.looper))
-        var helper: IBuddyHelper? = null
+        val frames = FixtureFrameSink()
+        var bootstrap: AuthenticatedHelperFixture? = null
         var stage = "bootstrap"
         var windowCount = 0
         var fixtureRootCount = 0
         try {
-            val connected = try {
-                ParcelFileDescriptor.AutoCloseOutputStream(process[1]).use {
-                    it.write((Base64.encodeToString(pending.nonce, Base64.NO_WRAP) + "\n").toByteArray())
-                }
-                requireNotNull(withTimeout(15_000) { pending.result.await() })
-            } catch (failure: Exception) {
-                val errors = ParcelFileDescriptor.AutoCloseInputStream(process[2])
-                val text = errors.readNBytes(minOf(errors.available(), 1024)).toString(Charsets.UTF_8)
-                val reason = text.lineSequence().firstOrNull { it.startsWith("BUDDY_BOOTSTRAP_FAILED:") }
-                throw AssertionError(reason ?: "Helper handoff did not complete", failure)
-            }
-            helper = connected
+            val session = AuthenticatedHelperFixture.start(context, automation)
+            bootstrap = session
+            val connected = session.helper
             stage = "capabilities_and_lease"
             val capabilities = connected.capabilities()
             assertEquals(ShellProtocol.SHELL_UID, capabilities.getInt("helperUid"))
@@ -94,7 +61,7 @@ class HelperDeviceTest {
             assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
             connected.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
             assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
-            val token = connected.createDisplay(lease, 720, 1280, 240, reader.surface)
+            val token = connected.createDisplay(lease, 720, 1280, 240, frames.surface)
             stage = "fixture_launch"
             val display = connected.launchFixture(lease, token, UUID.randomUUID().toString())
             assertTrue(display > 0)
@@ -137,7 +104,7 @@ class HelperDeviceTest {
             stage = "verify_fixture_effect"
             node { it.text?.toString() == "Sent to Alice: $text" }
             stage = "verify_frames"
-            withTimeout(5_000) { while (frameCount.get() == 0) delay(50) }
+            withTimeout(5_000) { while (frames.count == 0) delay(50) }
             stage = "takeover"
             connected.takeOverFixture(lease, token, UUID.randomUUID().toString())
             node(0) { it.text?.toString() == "Sent to Alice: $text" }
@@ -154,19 +121,12 @@ class HelperDeviceTest {
             connected.releaseLease(lease)
         } catch (failure: Exception) {
             throw AssertionError(
-                "Fixture probe failed at $stage; frames=${frameCount.get()}; windows=$windowCount; fixtureRoots=$fixtureRootCount",
+                "Fixture probe failed at $stage; frames=${frames.count}; windows=$windowCount; fixtureRoots=$fixtureRootCount",
                 failure
             )
         } finally {
-            helper?.let { runCatching { it.disconnect() } }
-            synchronized(frameLock) {
-                captureOpen = false
-                reader.setOnImageAvailableListener(null, null)
-                reader.close()
-            }
-            frames.quitSafely()
-            process.forEach { runCatching { it.close() } }
-            BootstrapProvider.clear()
+            bootstrap?.close()
+            frames.close()
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
         }
     }
