@@ -63,6 +63,8 @@ class BootstrapProvider : ContentProvider() {
         private val lock = Any()
         private var pending: Pending? = null
         fun prepare(method: String): Pending = synchronized(lock) {
+            require(method in setOf(ShellProtocol.HANDOFF, ShellProtocol.REVALIDATE))
+            pending?.nonce?.fill(0)
             pending?.result?.cancel()
             Pending(
                 method,

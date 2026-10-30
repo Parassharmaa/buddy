@@ -30,7 +30,7 @@ jobs:
       - name: Native protocol tests
         run: bash scripts/check-native.sh
       - name: Tests, Kotlin style, Android lint and APKs
-        run: ./gradlew --no-daemon lintKotlin :core:test :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
+        run: ./gradlew --no-daemon lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: buddy-development-apks
@@ -57,7 +57,7 @@ jobs:
             adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
-            ./gradlew --no-daemon --no-parallel --continue :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
+            ./gradlew --no-daemon --no-parallel --continue -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 
       - name: Report device test results
         if: always() && steps.device.outcome != 'skipped'

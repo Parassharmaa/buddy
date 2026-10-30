@@ -113,7 +113,8 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
     }
 }
 
-class BootstrapCommand private constructor(val value: String) {
+class BootstrapCommand private constructor(val arguments: List<String>) {
+    val value: String get() = arguments.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
     companion object {
         fun forInstalledApp(context: android.content.Context): BootstrapCommand {
             val info = context.packageManager.getPackageInfo(
@@ -138,16 +139,18 @@ class BootstrapCommand private constructor(val value: String) {
             require(apk.startsWith("/data/app/") && apk.endsWith(".apk") && !apk.contains('\n'))
             require(appId.matches(Regex("[a-zA-Z][a-zA-Z0-9_.]+")) && appUid >= 10000)
             require(signingDigest.matches(Regex("[0-9a-f]{64}")))
-            fun quote(value: String) = "'" + value.replace("'", "'\"'\"'") + "'"
             val entry = if (revalidate) "dev.buddy.helper.RevalidateMain" else "dev.buddy.helper.HelperMain"
             return BootstrapCommand(
-                "CLASSPATH=" + quote(
-                    apk
-                ) + " app_process /system/bin " + entry + " " + quote(appId) +
-                    " " +
-                    appUid +
-                    " " +
+                listOf(
+                    "env",
+                    "CLASSPATH=$apk",
+                    "app_process",
+                    "/system/bin",
+                    entry,
+                    appId,
+                    appUid.toString(),
                     signingDigest
+                )
             )
         }
     }

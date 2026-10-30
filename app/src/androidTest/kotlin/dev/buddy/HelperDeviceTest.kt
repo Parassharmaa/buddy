@@ -44,7 +44,9 @@ class HelperDeviceTest {
         }
         val command = BootstrapCommand.forInstalledApp(context)
         val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
-        val process = automation.executeShellCommandRwe(command.value)
+        // UiAutomation tokenizes argv without shell parsing. Installed APK paths contain no whitespace.
+        check(command.arguments.none { argument -> argument.any(Char::isWhitespace) })
+        val process = automation.executeShellCommandRwe(command.arguments.joinToString(" "))
         val reader = ImageReader.newInstance(720, 1280, PixelFormat.RGBA_8888, 2)
         val frames = HandlerThread("fixture-frame-drain").apply { start() }
         val frameLock = Any()
@@ -57,10 +59,10 @@ class HelperDeviceTest {
         }, Handler(frames.looper))
         var helper: IBuddyHelper? = null
         try {
-            ParcelFileDescriptor.AutoCloseOutputStream(process[1]).use {
-                it.write((Base64.encodeToString(pending.nonce, Base64.NO_WRAP) + "\n").toByteArray())
-            }
             val connected = try {
+                ParcelFileDescriptor.AutoCloseOutputStream(process[1]).use {
+                    it.write((Base64.encodeToString(pending.nonce, Base64.NO_WRAP) + "\n").toByteArray())
+                }
                 requireNotNull(withTimeout(15_000) { pending.result.await() })
             } catch (failure: Exception) {
                 val errors = ParcelFileDescriptor.AutoCloseInputStream(process[2])
