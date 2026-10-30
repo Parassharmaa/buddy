@@ -1,7 +1,6 @@
 package dev.buddy
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.buddy.connection.PhoneConnection
 import dev.buddy.core.ChatMessage
@@ -12,6 +11,7 @@ import dev.buddy.core.ModelFailure
 import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.model.ModelClient
+import dev.buddy.storage.EncryptedStore
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -42,9 +42,7 @@ data class BuddyState(
 )
 private fun newConversation() = Conversation(UUID.randomUUID().toString(), "New conversation")
 
-class BuddyViewModel(application: Application) : AndroidViewModel(application) {
-    private val store = (application as BuddyApplication).store
-    val phone = PhoneConnection(application)
+class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnection) : ViewModel() {
     private val client = ModelClient()
     private val _state = MutableStateFlow(BuddyState())
     val state = _state.asStateFlow()
