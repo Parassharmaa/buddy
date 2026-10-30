@@ -30,10 +30,11 @@ wait_for_framework() {
 prepare_device() {
     local preparation_attempt
     for preparation_attempt in 1 2 3; do
-        if adb shell input keyevent KEYCODE_WAKEUP &&
-            adb shell wm dismiss-keyguard &&
-            adb shell settings put system screen_off_timeout 1800000 &&
-            adb shell settings put global development_settings_enabled 1; then
+        printf 'Preparing emulator (attempt %s).\n' "$preparation_attempt"
+        if timeout 10 adb shell input keyevent KEYCODE_WAKEUP &&
+            timeout 10 adb shell wm dismiss-keyguard &&
+            timeout 10 adb shell settings put system screen_off_timeout 1800000 &&
+            timeout 10 adb shell settings put global development_settings_enabled 1; then
             return 0
         fi
         echo 'Framework restarted during preparation; waiting again.'
