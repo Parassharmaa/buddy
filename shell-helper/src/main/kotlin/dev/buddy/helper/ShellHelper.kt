@@ -178,6 +178,9 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
 
     @Synchronized override fun displayState(value: String, token: String): Bundle = asShell {
         val display = owned(value, token)
+        display.fixtureRoot?.let {
+            ShellActivityAdapter.verifyOwnedFixture(it, display.display.display.displayId, appUid)
+        }
         Bundle().apply {
             putInt("displayId", display.display.display.displayId)
             putInt("width", display.width)
@@ -237,6 +240,11 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val display = owned(value, token)
         require(x in 0 until display.width && y in 0 until display.height)
         reserve(requestId)
+        ShellActivityAdapter.verifyOwnedFixture(
+            requireNotNull(display.fixtureRoot),
+            display.display.display.displayId,
+            appUid
+        )
         val managerClass = Class.forName("android.hardware.input.InputManagerGlobal")
         val manager = managerClass.getMethod("getInstance").invoke(null)
         val inject = managerClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
@@ -252,6 +260,8 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
                 event.recycle()
             }
         }
+        // Recheck expiry and lock after the task-manager call, immediately before DOWN.
+        owned(value, token)
         try {
             event(MotionEvent.ACTION_DOWN)
         } finally {

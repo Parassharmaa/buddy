@@ -63,6 +63,12 @@ internal object ShellActivityAdapter {
         ) { "Fixture task contains unowned activities" }
     }
 
+    fun verifyOwnedFixture(rootId: Int, displayId: Int, appUid: Int) {
+        val running = roots(displayId).filter { it.numActivities > 0 }
+        check(running.size == 1 && running.single().taskId == rootId) { "Workspace changed" }
+        verifyFixture(running.single(), appUid)
+    }
+
     fun moveFixture(rootId: Int, fromDisplay: Int, toDisplay: Int, appUid: Int) {
         require(fromDisplay >= 0 && toDisplay >= 0 && fromDisplay != toDisplay)
         val root = roots(fromDisplay).single { it.taskId == rootId }

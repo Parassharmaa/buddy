@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Rect
 import android.os.Binder
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -118,6 +119,25 @@ class HelperDeviceTest {
             stage = "handback"
             connected.returnFixture(lease, token, UUID.randomUUID().toString())
             node { it.text?.toString() == "Sent to Alice: $text" }
+            stage = "foreign_activity_blocks_input"
+            ParcelFileDescriptor.AutoCloseInputStream(
+                automation.executeShellCommand(
+                    "am start -W --display $display --activity-new-task --activity-multiple-task " +
+                        "-n dev.buddy/.MainActivity"
+                )
+            ).use { it.readNBytes(4096) }
+            withTimeout(5_000) {
+                while (automation.windowsOnAllDisplays.get(display).orEmpty().none {
+                        it.root?.packageName?.toString() == context.packageName
+                    }
+                ) {
+                    delay(50)
+                }
+            }
+            assertThrows(IllegalStateException::class.java) {
+                connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
+            }
+            assertThrows(IllegalStateException::class.java) { connected.displayState(lease, token) }
             connected.releaseDisplay(lease, token)
             assertThrows(IllegalArgumentException::class.java) {
                 connected.tap(lease, token, UUID.randomUUID().toString(), 10, 10)
