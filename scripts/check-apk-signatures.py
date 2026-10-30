@@ -1,4 +1,4 @@
-"""Ensure the controlled fixture and Buddy come from the same signed development build."""
+"""Verify matching development signatures and 16 KB APK alignment."""
 import os
 from pathlib import Path
 import re
@@ -9,6 +9,10 @@ signer = sdk / "build-tools/37.0.0/apksigner"
 digests = []
 for module in ("app", "fixture"):
     apk = Path(module, f"build/outputs/apk/debug/{module}-debug.apk")
+    subprocess.run(
+        [str(sdk / "build-tools/37.0.0/zipalign"), "-c", "-P", "16", "4", str(apk)],
+        check=True, capture_output=True, text=True,
+    )
     result = subprocess.run(
         [str(signer), "verify", "--print-certs", str(apk)],
         check=True, capture_output=True, text=True,

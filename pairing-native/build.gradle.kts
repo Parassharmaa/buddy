@@ -1,12 +1,31 @@
 plugins {
     alias(libs.plugins.android.library)
 }
+abstract class BundleNativeLicense : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val license: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val destination: DirectoryProperty
+
+    @TaskAction fun bundle() {
+        val output = destination.file("licenses/boringssl.txt").get().asFile
+        output.parentFile.mkdirs()
+        license.get().asFile.copyTo(output, overwrite = true)
+    }
+}
+val bundleNativeLicense = tasks.register<BundleNativeLicense>("bundleNativeLicense") {
+    license.set(layout.projectDirectory.file("boringssl/LICENSE"))
+    destination.set(layout.buildDirectory.dir("generated/native-license-assets"))
+}
 android {
     namespace = "dev.buddy.pairingnative"
     compileSdk { version = release(37) { minorApiLevel = 2 } }
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        consumerProguardFiles("consumer-rules.pro")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -25,6 +44,9 @@ android {
             version = "4.1.2"
         }
     }
+}
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(bundleNativeLicense, BundleNativeLicense::destination)
 }
 dependencies {
     androidTestImplementation(libs.test.runner)

@@ -7,6 +7,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        consumerProguardFiles("consumer-rules.pro")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

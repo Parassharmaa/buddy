@@ -21,3 +21,5 @@ research-cache/
 .DS_Store
 
 .kotlin/
+__pycache__/
+*.py[cod]

@@ -25,6 +25,13 @@ android {
         warningsAsErrors = true
     }
     buildFeatures { compose = true }
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
     providers.environmentVariable("BUDDY_DEBUG_KEYSTORE").orNull?.let { path ->
         signingConfigs.getByName("debug").storeFile = file(path)
         signingConfigs.getByName("debug").storeType = "PKCS12"
