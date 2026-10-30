@@ -3,6 +3,7 @@ package dev.buddy
 import android.content.Intent
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.provider.Settings
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -67,16 +68,36 @@ class LocalPairingDeviceTest {
                 while (port !in 1..65535) {
                     delay(200)
                     val controls = nodes()
-                    if (controls.any { it.text?.toString()?.startsWith("Allow wireless debugging") == true }) {
-                        controls.firstOrNull { it.text?.toString() == "Allow" }?.let(::click)
+                    if (controls.any {
+                            it.text?.toString()?.startsWith("Allow wireless debugging", ignoreCase = true) == true
+                        }
+                    ) {
+                        controls.firstOrNull { it.text?.toString()?.equals("Allow", ignoreCase = true) == true }
+                            ?.let(::click)
                     }
                     port = shell("getprop service.adb.tls.port").toIntOrNull() ?: 0
                 }
                 port
             }
+            stage = "open_wireless_settings"
             context.startActivity(
-                Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
+            withTimeout(10_000) {
+                while (true) {
+                    val controls = nodes()
+                    val item = controls.firstOrNull {
+                        it.text?.toString()?.equals("Wireless debugging", ignoreCase = true) == true
+                    }
+                    if (item != null) {
+                        click(item)
+                        break
+                    }
+                    controls.firstOrNull { it.isScrollable }
+                        ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                    delay(150)
+                }
+            }
             stage = "open_pairing_dialog"
             withTimeout(10_000) {
                 while (true) {
