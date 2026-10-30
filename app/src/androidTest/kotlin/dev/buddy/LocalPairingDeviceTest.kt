@@ -60,7 +60,15 @@ class LocalPairingDeviceTest {
         }
         try {
             identity.forget()
+            stage = "join_emulator_wifi"
             shell("svc wifi enable")
+            if (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) {
+                shell("cmd wifi connect-network AndroidWifi open")
+            }
+            withTimeout(10_000) {
+                while (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) delay(200)
+            }
+            stage = "enable_wireless_debugging"
             shell("settings put global adb_wifi_enabled 1")
             stage = "wireless_connection_port"
             val connectPort = withTimeout(15_000) {

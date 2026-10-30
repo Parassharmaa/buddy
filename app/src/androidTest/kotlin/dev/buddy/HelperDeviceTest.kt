@@ -57,6 +57,9 @@ class HelperDeviceTest {
             }
         }, Handler(frames.looper))
         var helper: IBuddyHelper? = null
+        var stage = "bootstrap"
+        var windowCount = 0
+        var fixtureRootCount = 0
         try {
             val connected = try {
                 ParcelFileDescriptor.AutoCloseOutputStream(process[1]).use {
@@ -70,6 +73,7 @@ class HelperDeviceTest {
                 throw AssertionError(reason ?: "Helper handoff did not complete", failure)
             }
             helper = connected
+            stage = "capabilities_and_lease"
             val capabilities = connected.capabilities()
             assertEquals(ShellProtocol.SHELL_UID, capabilities.getInt("helperUid"))
             assertEquals(ShellProtocol.VERSION, capabilities.getInt("protocol"))
@@ -91,6 +95,7 @@ class HelperDeviceTest {
             connected.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
             assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
             val token = connected.createDisplay(lease, 720, 1280, 240, reader.surface)
+            stage = "fixture_launch"
             val display = connected.launchFixture(lease, token, UUID.randomUUID().toString())
             assertTrue(display > 0)
             assertThrows(IllegalArgumentException::class.java) {
@@ -102,6 +107,8 @@ class HelperDeviceTest {
             ): AccessibilityNodeInfo = withTimeout(5_000) {
                 while (true) {
                     val windows = automation.windowsOnAllDisplays.get(onDisplay).orEmpty()
+                    windowCount = windows.size
+                    fixtureRootCount = windows.count { it.root?.packageName?.toString() == "dev.buddy.fixture" }
                     val found = windows.firstNotNullOfOrNull { window ->
                         window.root?.let { find(it, predicate) }
                     }
@@ -110,6 +117,7 @@ class HelperDeviceTest {
                 }
                 error("No fixture window")
             }
+            stage = "observe_editor"
             val editor = node { it.isEditable }
             val text = "こんにちは Buddy · café"
             assertTrue(
@@ -120,17 +128,23 @@ class HelperDeviceTest {
                     }
                 )
             )
+            stage = "verify_unicode_editor"
             node { it.text?.toString() == text }
-            val send = node { it.text?.toString() == "Send to fixture inbox" }
+            stage = "observe_send_button"
+            val send = node { it.text?.toString()?.equals("Send to fixture inbox", ignoreCase = true) == true }
             val bounds = Rect().also(send::getBoundsInScreen)
             connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
+            stage = "verify_fixture_effect"
             node { it.text?.toString() == "Sent to Alice: $text" }
+            stage = "verify_frames"
             withTimeout(5_000) { while (frameCount.get() == 0) delay(50) }
+            stage = "takeover"
             connected.takeOverFixture(lease, token, UUID.randomUUID().toString())
             node(0) { it.text?.toString() == "Sent to Alice: $text" }
             assertThrows(IllegalStateException::class.java) {
                 connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
             }
+            stage = "handback"
             connected.returnFixture(lease, token, UUID.randomUUID().toString())
             node { it.text?.toString() == "Sent to Alice: $text" }
             connected.releaseDisplay(lease, token)
@@ -138,6 +152,11 @@ class HelperDeviceTest {
                 connected.tap(lease, token, UUID.randomUUID().toString(), 10, 10)
             }
             connected.releaseLease(lease)
+        } catch (failure: Exception) {
+            throw AssertionError(
+                "Fixture probe failed at $stage; frames=${frameCount.get()}; windows=$windowCount; fixtureRoots=$fixtureRootCount",
+                failure
+            )
         } finally {
             helper?.let { runCatching { it.disconnect() } }
             synchronized(frameLock) {
