@@ -25,7 +25,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,7 +93,9 @@ class HelperDeviceTest {
             val token = connected.createDisplay(lease, 720, 1280, 240, reader.surface)
             val display = connected.launchFixture(lease, token, UUID.randomUUID().toString())
             assertTrue(display > 0)
-            assertNotEquals(token, display.toString())
+            assertThrows(IllegalArgumentException::class.java) {
+                connected.tap(lease, display.toString(), UUID.randomUUID().toString(), 10, 10)
+            }
             suspend fun node(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo =
                 withTimeout(5_000) {
                     while (true) {
@@ -124,6 +125,9 @@ class HelperDeviceTest {
             node { it.text?.toString() == "Sent to Alice: $text" }
             withTimeout(5_000) { while (frameCount.get() == 0) delay(50) }
             connected.releaseDisplay(lease, token)
+            assertThrows(IllegalArgumentException::class.java) {
+                connected.tap(lease, token, UUID.randomUUID().toString(), 10, 10)
+            }
             connected.releaseLease(lease)
         } finally {
             helper?.let { runCatching { it.disconnect() } }
