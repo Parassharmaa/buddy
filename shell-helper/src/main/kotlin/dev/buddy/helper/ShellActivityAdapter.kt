@@ -30,7 +30,7 @@ internal object ShellActivityAdapter {
         ).invoke(
             service(), null, "com.android.shell", null, intent, null, null, null, 0, 0, null, options, appUid / 100_000
         ) as Int
-        check(result in 0..3) { "Fixture launch rejected" }
+        check(result in 0..3) { "Fixture launch rejected ($result)" }
         val deadline = SystemClock.elapsedRealtime() + 2_000
         while (SystemClock.elapsedRealtime() < deadline) {
             val created = roots(displayId).filter { it.taskId !in previous && it.numActivities > 0 }

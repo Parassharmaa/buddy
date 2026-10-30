@@ -43,6 +43,8 @@ class LocalPairingDeviceTest {
         var helper: IBuddyHelper? = null
         var code: CharArray? = null
         var stage = "enable_wireless_debugging"
+        var sawConfirmation = false
+        var allowedConfirmation = false
         fun nodes(): List<AccessibilityNodeInfo> {
             val result = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo, depth: Int) {
@@ -80,8 +82,14 @@ class LocalPairingDeviceTest {
                             it.text?.toString()?.startsWith("Allow wireless debugging", ignoreCase = true) == true
                         }
                     ) {
-                        controls.firstOrNull { it.text?.toString()?.equals("Allow", ignoreCase = true) == true }
-                            ?.let(::click)
+                        sawConfirmation = true
+                        controls.firstOrNull {
+                            it.viewIdResourceName == "android:id/button1" ||
+                                it.text?.toString()?.equals("Allow", ignoreCase = true) == true
+                        }?.let {
+                            click(it)
+                            allowedConfirmation = true
+                        }
                     }
                     port = shell("getprop service.adb.tls.port").toIntOrNull() ?: 0
                 }
@@ -164,7 +172,14 @@ class LocalPairingDeviceTest {
             delay(1_000)
             assertEquals(ShellProtocol.SHELL_UID, requireNotNull(helper).capabilities().getInt("helperUid"))
         } catch (failure: Exception) {
-            throw AssertionError("Local pairing fixture failed at $stage", failure)
+            val enabled = runCatching { shell("settings get global adb_wifi_enabled") == "1" }.getOrNull()
+            val tls = runCatching { shell("getprop persist.adb.tls_server.enable") == "1" }.getOrNull()
+            val secure = runCatching { shell("getprop ro.adb.secure") == "1" }.getOrNull()
+            throw AssertionError(
+                "Local pairing fixture failed at $stage; enabled=$enabled; tls=$tls; secure=$secure; " +
+                    "confirmation=$sawConfirmation; allowed=$allowedConfirmation",
+                failure
+            )
         } finally {
             code?.fill('\u0000')
             helper?.let { runCatching { it.disconnect() } }

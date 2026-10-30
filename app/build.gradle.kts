@@ -25,6 +25,10 @@ android {
         warningsAsErrors = true
     }
     buildFeatures { compose = true }
+    providers.environmentVariable("BUDDY_DEBUG_KEYSTORE").orNull?.let { path ->
+        signingConfigs.getByName("debug").storeFile = file(path)
+        signingConfigs.getByName("debug").storeType = "PKCS12"
+    }
 }
 dependencies {
     androidTestImplementation(libs.test.runner)
