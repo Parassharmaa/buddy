@@ -82,7 +82,7 @@ class HelperDeviceTest {
                     windowCount = windows.size
                     fixtureRootCount = windows.count { it.root?.packageName?.toString() == "dev.buddy.fixture" }
                     val found = windows.firstNotNullOfOrNull { window ->
-                        window.root?.let { find(it, predicate) }
+                        window.root?.let { findFixtureNode(it, predicate) }
                     }
                     if (found != null) return@withTimeout found
                     delay(100)
@@ -153,18 +153,5 @@ class HelperDeviceTest {
             frames.close()
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
         }
-    }
-
-    private fun find(
-        node: AccessibilityNodeInfo,
-        predicate: (AccessibilityNodeInfo) -> Boolean,
-        depth: Int = 0
-    ): AccessibilityNodeInfo? {
-        if (depth > 20 || node.packageName?.toString() != "dev.buddy.fixture") return null
-        if (predicate(node)) return node
-        for (index in 0 until node.childCount) {
-            node.getChild(index)?.let { child -> find(child, predicate, depth + 1)?.let { return it } }
-        }
-        return null
     }
 }

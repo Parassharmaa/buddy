@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.view.Display
 import android.view.InputEvent
 import android.view.MotionEvent
 import android.view.Surface
@@ -138,6 +139,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     }
 
     @Synchronized
+    @android.annotation.SuppressLint("PrivateApi", "BlockedPrivateApi")
     override fun createDisplay(value: String, width: Int, height: Int, dpi: Int, surface: Surface): String = asShell {
         validLease(value)
         require(
@@ -162,9 +164,20 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val manager = context.getSystemService(DisplayManager::class.java)
         val display =
             requireNotNull(manager.createVirtualDisplay("Buddy workspace", width, height, dpi, surface, flags))
-        if (!display.display.isValid || display.display.displayId <= android.view.Display.DEFAULT_DISPLAY) {
-            display.release()
-            error("Owned display unavailable")
+        try {
+            val actual = display.display
+            check(actual.isValid && actual.displayId > Display.DEFAULT_DISPLAY) { "Owned display unavailable" }
+            fun effectiveFlag(name: String) = Display::class.java.getDeclaredField("FLAG_$name").getInt(null)
+            val required = listOf("TRUSTED", "OWN_FOCUS", "STEAL_TOP_FOCUS_DISABLED").fold(0) { mask, name ->
+                mask or effectiveFlag(name)
+            }
+            val forbidden = Display.FLAG_PRIVATE or Display.FLAG_SECURE or effectiveFlag("ALWAYS_UNLOCKED")
+            check(actual.flags and required == required && actual.flags and forbidden == 0) {
+                "Required display isolation flags were not applied"
+            }
+        } catch (failure: Throwable) {
+            runCatching { display.release() }
+            throw failure
         }
         val token = UUID.randomUUID().toString()
         displays[token] = OwnedDisplay(display, width, height)
