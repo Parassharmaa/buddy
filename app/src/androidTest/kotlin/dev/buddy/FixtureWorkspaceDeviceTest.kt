@@ -16,6 +16,7 @@ import dev.buddy.phone.FixtureWorkspace
 import dev.buddy.storage.EncryptedStore
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -63,27 +64,43 @@ class FixtureWorkspaceDeviceTest {
                             UUID.randomUUID().toString()
                         )
                         try {
-                            suspend fun ready(predicate: (Observation) -> Boolean): Observation = withTimeout(5_000) {
-                                while (true) {
-                                    try {
-                                        val observation = workspace.observe()
-                                        if (predicate(observation)) return@withTimeout observation
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (_: IllegalStateException) {
-                                        // Read-only retry while the fixture finishes its window update.
+                            suspend fun ready(predicate: (Observation) -> Boolean): Observation {
+                                var last: Observation? = null
+                                var lastFailure: IllegalStateException? = null
+                                try {
+                                    return withTimeout(5_000) {
+                                        while (true) {
+                                            try {
+                                                val observation = workspace.observe()
+                                                last = observation
+                                                if (predicate(observation)) return@withTimeout observation
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (failure: IllegalStateException) {
+                                                lastFailure = failure
+                                            }
+                                            delay(50)
+                                        }
+                                        error("Fixture observation unavailable")
                                     }
-                                    delay(50)
+                                } catch (timeout: TimeoutCancellationException) {
+                                    throw AssertionError(
+                                        "Fixture not ready; nodes=${last?.nodes?.size}; " +
+                                            "private=${last?.credentialSurface}; overlay=${last?.excludedOverlay}",
+                                        lastFailure ?: timeout
+                                    )
                                 }
-                                error("Fixture observation unavailable")
                             }
                             fun gate() =
                                 DispatchGate(false, false, false, true, true, Long.MAX_VALUE, Long.MAX_VALUE, false)
-                            stage = "observe_and_draft"
+                            stage = "observe_initial_tree"
                             val initial = ready { it.nodes.any { node -> node.editable } }
                             val message = "こんにちは Buddy · café"
                             val draft = workspace.prepareDraft(initial, message)
-                            assertTrue(workspace.execute(draft, gate = { gate() }) is ExecutionResult.Verified)
+                            stage = "dispatch_draft"
+                            val draftResult = workspace.execute(draft, gate = { gate() })
+                            assertTrue("Draft execution: $draftResult", draftResult is ExecutionResult.Verified)
+                            stage = "observe_draft"
                             val drafted = ready { it.nodes.any { node -> node.editable && node.label == message } }
                             stage = "reject_forged_payload"
                             val forged = drafted.copy(
@@ -106,7 +123,8 @@ class FixtureWorkspaceDeviceTest {
                                 accepted = true
                             )
                             stage = "approve_fixture_send"
-                            assertTrue(workspace.execute(send, approval, gate = { gate() }) is ExecutionResult.Verified)
+                            val sendResult = workspace.execute(send, approval, gate = { gate() })
+                            assertTrue("Send execution: $sendResult", sendResult is ExecutionResult.Verified)
                             assertEquals("consumed", store.get("consumed:${approval.id}"))
                             stage = "takeover_and_handback"
                             workspace.takeOver()
@@ -121,7 +139,8 @@ class FixtureWorkspaceDeviceTest {
                             )
                             stage = "suppress_protected_tree"
                             val protectedPage = workspace.prepareProtectedPage(returned)
-                            assertTrue(workspace.execute(protectedPage, gate = { gate() }) is ExecutionResult.Verified)
+                            val protectedResult = workspace.execute(protectedPage, gate = { gate() })
+                            assertTrue("Protected page: $protectedResult", protectedResult is ExecutionResult.Verified)
                             val suppressed = workspace.observe()
                             assertTrue(suppressed.credentialSurface && suppressed.nodes.isEmpty())
                             assertTrue(runCatching { workspace.prepareDraft(suppressed, "blocked") }.isFailure)

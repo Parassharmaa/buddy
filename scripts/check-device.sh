@@ -7,6 +7,7 @@ fi
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 adb shell settings put system screen_off_timeout 1800000
+adb shell settings put global development_settings_enabled 1
 device_gradle_args=(--no-daemon --no-parallel --continue
     -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true
     -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000)

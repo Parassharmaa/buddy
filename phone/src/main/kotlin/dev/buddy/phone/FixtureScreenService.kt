@@ -1,6 +1,7 @@
 package dev.buddy.phone
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
@@ -48,6 +49,10 @@ class FixtureScreenService : AccessibilityService() {
     private val revision = AtomicLong()
     override fun onServiceConnected() {
         super.onServiceConnected()
+        serviceInfo = serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         revision.incrementAndGet()
         current = this
     }

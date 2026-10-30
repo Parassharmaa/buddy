@@ -17,6 +17,7 @@ class FixtureActivity : Activity() {
         super.onCreate(savedInstanceState)
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
             setPadding(32, 72, 32, 32)
         }
         fun text(value: String) = TextView(this).apply {
@@ -71,6 +72,7 @@ class FixtureActivity : Activity() {
         )
         if (savedInstanceState?.getBoolean("protected") == true) showProtectedPage()
         setContentView(layout)
+        layout.requestFocus()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
