@@ -60,8 +60,11 @@ jobs:
             fixture/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Enable KVM for fixture probes
-        run: sudo chmod a+rw /dev/kvm
+      - name: Install emulator runtime libraries and enable KVM
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libpulse0 libasound2t64 libnss3 libxkbcommon0 libxcb1 libx11-6 libgl1 libegl1
+          sudo chmod a+rw /dev/kvm
       - name: Android fixture probes on API ${{ matrix.image-api }} user image
         id: device
         timeout-minutes: 10
