@@ -17,6 +17,11 @@ device_result=0
 # rebuilt fixture after its own suite, before the independent Buddy suite.
 python3 scripts/check-apk-signatures.py
 adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+if (( $(adb shell getprop ro.build.version.sdk | tr -d '\r') >= 37 )); then
+    # Disposable emulator only. Production requests this permission through its setup UI.
+    adb shell pm grant dev.buddy android.permission.ACCESS_LOCAL_NETWORK
+fi
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 ./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest || device_result=1

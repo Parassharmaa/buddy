@@ -10,8 +10,17 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
+    name: verify (Android ${{ matrix.image-api }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image-api: '36'
+            target: google_apis_playstore
+          - image-api: '37.2'
+            target: google_apis_playstore_ps16k
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,12 +43,16 @@ jobs:
           keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$RUNNER_TEMP/buddy-debug.keystore" -storepass android -keypass android -alias androiddebugkey -dname "CN=Buddy Android CI" -keyalg RSA -keysize 2048 -validity 3650
           printf 'BUDDY_DEBUG_KEYSTORE=%s\n' "$RUNNER_TEMP/buddy-debug.keystore" >> "$GITHUB_ENV"
       - name: Tests, Kotlin style, Android lint and APKs
-        run: ./gradlew --no-daemon lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
-      - name: Verify matching Buddy and fixture signatures
-        run: python3 scripts/check-apk-signatures.py
+        run: |
+          ./gradlew --no-daemon lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
+          ./gradlew --no-daemon --no-parallel --max-workers=2 :app:assembleRelease :fixture:assembleRelease lintRelease
+      - name: Verify APK signatures, alignment and optimized entry points
+        run: |
+          python3 scripts/check-apk-signatures.py
+          python3 scripts/check-release.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: buddy-development-apks
+          name: buddy-development-apks-api${{ matrix.image-api }}
           path: |
             app/build/outputs/apk/debug/*.apk
             fixture/build/outputs/apk/debug/*.apk
@@ -47,13 +60,13 @@ jobs:
 
       - name: Enable KVM for fixture probes
         run: sudo chmod a+rw /dev/kvm
-      - name: Android fixture probes on API 36 user image
+      - name: Android fixture probes on API ${{ matrix.image-api }} user image
         id: device
         timeout-minutes: 10
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 36
-          target: google_apis_playstore
+          api-level: ${{ matrix.image-api }}
+          target: ${{ matrix.target }}
           arch: x86_64
           profile: pixel_7
           emulator-build: '16696583'
@@ -69,6 +82,6 @@ jobs:
         if: always() && steps.device.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: buddy-device-test-results
+          name: buddy-device-test-results-api${{ matrix.image-api }}
           path: '**/build/outputs/androidTest-results/**/*.xml'
           if-no-files-found: ignore
