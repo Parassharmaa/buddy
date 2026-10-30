@@ -1,0 +1,21 @@
+# Android and local development
+.gradle/
+.idea/
+local.properties
+**/build/
+.cxx/
+captures/
+
+# Secrets and signing material
+.env
+.env.*
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+credentials.json
+
+# Local research and operating system files
+research-cache/
+.DS_Store
