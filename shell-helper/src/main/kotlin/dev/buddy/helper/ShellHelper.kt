@@ -35,6 +35,8 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     private var owner: IBinder? = null
     private var leaseDeadline = 0L
     private var authorizationDeadline = 0L
+    private var authorizationChallenge: ByteArray? = null
+    private var challengeDeadline = 0L
     private val usedChallenges = mutableSetOf<String>()
     private var idleSince = SystemClock.elapsedRealtime()
     private var stopped = false
@@ -59,6 +61,35 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
             SystemClock.elapsedRealtime() + ShellProtocol.LEASE_MS
     }
 
+    @Synchronized override fun prepareAuthorization(challenge: ByteArray) = asShell {
+        check(SystemClock.elapsedRealtime() < authorizationDeadline) { "Authorization expired" }
+        reserveChallenge(challenge)
+        authorizationChallenge?.fill(0)
+        authorizationChallenge = java.security.MessageDigest.getInstance("SHA-256").digest(challenge)
+        challengeDeadline = SystemClock.elapsedRealtime() + 15_000
+    }
+
+    @Synchronized override fun completeAuthorization(challenge: ByteArray) {
+        // Only the new shell process launched through a fresh authorized transport can finish
+        // this proof. The app and this helper's own process cannot refresh the timestamp.
+        check(Binder.getCallingUid() == ShellProtocol.SHELL_UID)
+        check(Binder.getCallingPid() != android.os.Process.myPid())
+        check(!stopped && challenge.size == 32)
+        val now = SystemClock.elapsedRealtime()
+        check(now < minOf(authorizationDeadline, challengeDeadline)) { "Authorization expired" }
+        val expected = requireNotNull(authorizationChallenge)
+        check(
+            java.security.MessageDigest.isEqual(
+                expected,
+                java.security.MessageDigest.getInstance("SHA-256").digest(challenge)
+            )
+        ) { "Authorization challenge mismatch" }
+        expected.fill(0)
+        authorizationChallenge = null
+        challengeDeadline = 0
+        authorizationDeadline = now + ShellProtocol.LEASE_MS
+    }
+
     private inline fun <T> asShell(block: () -> T): T {
         check(Binder.getCallingUid() == appUid) { "Unauthorized caller" }
         check(!stopped) { "Disconnected" }
@@ -74,6 +105,8 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         Bundle().apply {
             putInt("protocol", ShellProtocol.VERSION)
             putInt("helperUid", android.os.Process.myUid())
+            putInt("helperPid", android.os.Process.myPid())
+            putLong("authorizationDeadline", authorizationDeadline)
             putBoolean(
                 "secondaryDisplays",
                 context.packageManager.hasSystemFeature("android.software.activities_on_secondary_displays")
@@ -265,6 +298,9 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         check(requests.putIfAbsent(id, true) == null) { "Duplicate request" }
     }
     private fun cleanup() {
+        authorizationChallenge?.fill(0)
+        authorizationChallenge = null
+        challengeDeadline = 0
         if (owner != null || lease != null) idleSince = SystemClock.elapsedRealtime()
         displays.values.forEach { runCatching { it.display.release() } }
         displays.clear()

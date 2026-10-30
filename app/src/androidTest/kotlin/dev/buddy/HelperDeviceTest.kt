@@ -60,6 +60,10 @@ class HelperDeviceTest {
             val lease = requireNotNull(connected.acquireLease(Binder(), challenge).getString("lease"))
             assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
             connected.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
+            assertEquals(
+                capabilities.getLong("authorizationDeadline"),
+                connected.capabilities().getLong("authorizationDeadline")
+            )
             assertThrows(IllegalStateException::class.java) { connected.renewLease(lease, challenge) }
             val token = connected.createDisplay(lease, 720, 1280, 240, frames.surface)
             stage = "fixture_launch"

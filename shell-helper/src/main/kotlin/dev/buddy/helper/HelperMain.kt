@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.Looper
 import android.os.Process
 import android.util.Base64
+import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
 import java.security.MessageDigest
 
@@ -81,6 +82,11 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
             extras
         )
         check(result?.getBoolean("accepted") == true)
+        if (revalidate) {
+            stage = "complete_authorization"
+            val target = IBuddyHelper.Stub.asInterface(requireNotNull(requireNotNull(result).getBinder("helper")))
+            target.completeAuthorization(nonce)
+        }
         nonce.fill(0)
         println("BUDDY_HANDOFF_OK")
         System.out.flush()

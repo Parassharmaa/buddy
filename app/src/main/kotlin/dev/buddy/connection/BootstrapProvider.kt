@@ -22,10 +22,13 @@ class BootstrapProvider : ContentProvider() {
         require(data.size() <= 3 && data.getInt("protocol") == ShellProtocol.VERSION)
         val nonce = requireNotNull(data.getByteArray("nonce"))
         require(nonce.size == 32)
-        synchronized(lock) {
+        return synchronized(lock) {
             val expected = requireNotNull(pending)
             check(expected.method == method && SystemClock.elapsedRealtime() < expected.deadline)
             check(MessageDigest.isEqual(nonce, expected.nonce))
+            if (method == ShellProtocol.REVALIDATE) {
+                check(Binder.getCallingPid() != expected.helperPid) { "A new shell process is required" }
+            }
             pending = null
             expected.nonce.fill(0)
             if (method == ShellProtocol.HANDOFF) {
@@ -38,8 +41,11 @@ class BootstrapProvider : ContentProvider() {
             } else {
                 expected.result.complete(null)
             }
+            Bundle().apply {
+                putBoolean("accepted", true)
+                expected.revalidationTarget?.let { putBinder("helper", it.asBinder()) }
+            }
         }
-        return Bundle().apply { putBoolean("accepted", true) }
     }
     override fun query(
         uri: Uri,
@@ -58,7 +64,9 @@ class BootstrapProvider : ContentProvider() {
         val method: String,
         val nonce: ByteArray,
         val deadline: Long,
-        val result: CompletableDeferred<IBuddyHelper?>
+        val result: CompletableDeferred<IBuddyHelper?>,
+        val revalidationTarget: IBuddyHelper?,
+        val helperPid: Int
     ) {
         @Volatile var deliveredHelper: IBuddyHelper? = null
             internal set
@@ -67,18 +75,25 @@ class BootstrapProvider : ContentProvider() {
     companion object {
         private val lock = Any()
         private var pending: Pending? = null
-        fun prepare(method: String): Pending = synchronized(lock) {
+        fun prepare(method: String, target: IBuddyHelper? = null): Pending {
             require(method in setOf(ShellProtocol.HANDOFF, ShellProtocol.REVALIDATE))
-            pending?.nonce?.fill(0)
-            pending?.result?.cancel()
-            Pending(
-                method,
-                ByteArray(32).also(SecureRandom()::nextBytes),
-                SystemClock.elapsedRealtime() + 15_000,
-                CompletableDeferred()
-            ).also {
-                pending =
-                    it
+            require((method == ShellProtocol.REVALIDATE) == (target != null))
+            val helperPid = target?.capabilities()?.getInt("helperPid") ?: 0
+            require(target == null || helperPid > 0)
+            return synchronized(lock) {
+                pending?.nonce?.fill(0)
+                pending?.result?.cancel()
+                Pending(
+                    method,
+                    ByteArray(32).also(SecureRandom()::nextBytes),
+                    SystemClock.elapsedRealtime() + 15_000,
+                    CompletableDeferred(),
+                    target,
+                    helperPid
+                ).also {
+                    pending =
+                        it
+                }
             }
         }
         fun clear() = synchronized(lock) {

@@ -15,4 +15,6 @@ interface IBuddyHelper {
     void takeOverFixture(String lease, String displayToken, String requestId);
     void returnFixture(String lease, String displayToken, String requestId);
     Bundle displayState(String lease, String displayToken);
+    void prepareAuthorization(in byte[] challenge);
+    void completeAuthorization(in byte[] challenge);
 }

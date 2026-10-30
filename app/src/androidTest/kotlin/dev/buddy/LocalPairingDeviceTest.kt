@@ -176,7 +176,27 @@ class LocalPairingDeviceTest {
             }
             stage = "helper_after_transport_close"
             delay(1_000)
-            assertEquals(ShellProtocol.SHELL_UID, requireNotNull(helper).capabilities().getInt("helperUid"))
+            val connectedHelper = requireNotNull(helper)
+            assertEquals(ShellProtocol.SHELL_UID, connectedHelper.capabilities().getInt("helperUid"))
+            stage = "fresh_transport_authorization_proof"
+            val previousProof = connectedHelper.capabilities().getLong("authorizationDeadline")
+            val proof = BootstrapProvider.prepare(ShellProtocol.REVALIDATE, connectedHelper)
+            val challenge = proof.nonce.copyOf()
+            try {
+                connectedHelper.prepareAuthorization(challenge)
+                withContext(Dispatchers.IO) {
+                    // A distinct transport constructs a distinct TLS context: no pooled socket/session.
+                    AdbTransport(identity).use { fresh ->
+                        fresh.connect(LoopbackPort(connectPort))
+                        fresh.bootstrap(BootstrapCommand.forInstalledApp(context, revalidate = true), challenge)
+                    }
+                }
+                withTimeout(5_000) { proof.result.await() }
+                check(connectedHelper.capabilities().getLong("authorizationDeadline") > previousProof)
+            } finally {
+                challenge.fill(0)
+                BootstrapProvider.clear()
+            }
         } catch (failure: Exception) {
             val enabled = runCatching { shell("settings get global adb_wifi_enabled") == "1" }.getOrNull()
             val tls = runCatching { shell("getprop persist.adb.tls_server.enable") == "1" }.getOrNull()

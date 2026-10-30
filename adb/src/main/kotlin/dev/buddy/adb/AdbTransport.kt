@@ -148,7 +148,7 @@ class AdbTransport internal constructor(private val identity: AdbIdentity, priva
 class BootstrapCommand private constructor(val arguments: List<String>) {
     val value: String get() = arguments.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
     companion object {
-        fun forInstalledApp(context: android.content.Context): BootstrapCommand {
+        fun forInstalledApp(context: android.content.Context, revalidate: Boolean = false): BootstrapCommand {
             val info = context.packageManager.getPackageInfo(
                 context.packageName,
                 android.content.pm.PackageManager.PackageInfoFlags.of(
@@ -158,7 +158,13 @@ class BootstrapCommand private constructor(val arguments: List<String>) {
             val certificate = requireNotNull(info.signingInfo).apkContentsSigners.single()
             val digest = java.security.MessageDigest.getInstance("SHA-256")
                 .digest(certificate.toByteArray()).joinToString("") { "%02x".format(it) }
-            return helper(context.applicationInfo.sourceDir, context.packageName, context.applicationInfo.uid, digest)
+            return helper(
+                context.applicationInfo.sourceDir,
+                context.packageName,
+                context.applicationInfo.uid,
+                digest,
+                revalidate
+            )
         }
 
         fun helper(
