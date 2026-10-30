@@ -2,7 +2,6 @@ package dev.buddy.helper
 
 import android.app.KeyguardManager
 import android.content.Context
-import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Binder
@@ -137,10 +136,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val display = owned(value, token)
         reserve(requestId)
         // Engineering spike launches only Buddy's controlled fixture; arbitrary app launch is gated later.
-        val intent = Intent().setClassName("dev.buddy.fixture", "dev.buddy.fixture.FixtureActivity")
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-        val options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(display.display.display.displayId)
-        context.startActivity(intent, options.toBundle())
+        ShellActivityAdapter.launchFixture(display.display.display.displayId, appUid)
         display.display.display.displayId
     }
 

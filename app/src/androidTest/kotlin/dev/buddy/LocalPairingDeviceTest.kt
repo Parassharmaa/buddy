@@ -41,13 +41,35 @@ class LocalPairingDeviceTest {
         val identity = AdbIdentity()
         var helper: IBuddyHelper? = null
         var code: CharArray? = null
+        var stage = "enable_wireless_debugging"
+        fun nodes(): List<AccessibilityNodeInfo> {
+            val result = mutableListOf<AccessibilityNodeInfo>()
+            fun visit(node: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 20 || result.size >= 500) return
+                result += node
+                for (index in 0 until node.childCount) node.getChild(index)?.let { visit(it, depth + 1) }
+            }
+            automation.rootInActiveWindow?.let { visit(it, 0) }
+            return result
+        }
+        fun click(node: AccessibilityNodeInfo) {
+            var target: AccessibilityNodeInfo? = node
+            while (target != null && !target.isClickable) target = target.parent
+            check(target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { "Settings control unavailable" }
+        }
         try {
             identity.forget()
+            shell("svc wifi enable")
             shell("settings put global adb_wifi_enabled 1")
+            stage = "wireless_connection_port"
             val connectPort = withTimeout(15_000) {
                 var port = 0
                 while (port !in 1..65535) {
                     delay(200)
+                    val controls = nodes()
+                    if (controls.any { it.text?.toString()?.startsWith("Allow wireless debugging") == true }) {
+                        controls.firstOrNull { it.text?.toString() == "Allow" }?.let(::click)
+                    }
                     port = shell("getprop service.adb.tls.port").toIntOrNull() ?: 0
                 }
                 port
@@ -55,32 +77,20 @@ class LocalPairingDeviceTest {
             context.startActivity(
                 Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            suspend fun nodes(): List<AccessibilityNodeInfo> {
-                val result = mutableListOf<AccessibilityNodeInfo>()
-                fun visit(node: AccessibilityNodeInfo, depth: Int) {
-                    if (depth > 20 || result.size >= 500) return
-                    result += node
-                    for (index in 0 until node.childCount) node.getChild(index)?.let { visit(it, depth + 1) }
-                }
-                automation.rootInActiveWindow?.let { visit(it, 0) }
-                return result
-            }
+            stage = "open_pairing_dialog"
             withTimeout(10_000) {
                 while (true) {
                     val item = nodes().firstOrNull {
                         it.text?.toString()?.equals("Pair device with pairing code", ignoreCase = true) == true
                     }
                     if (item != null) {
-                        var clickable: AccessibilityNodeInfo? = item
-                        while (clickable != null && !clickable.isClickable) clickable = clickable.parent
-                        check(clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
-                            "Pairing dialog could not be opened"
-                        }
+                        click(item)
                         break
                     }
                     delay(100)
                 }
             }
+            stage = "read_pairing_dialog"
             val pairingPort = withTimeout(10_000) {
                 while (true) {
                     val text = nodes().mapNotNull { it.text?.toString() }
@@ -98,6 +108,7 @@ class LocalPairingDeviceTest {
                 error("Pairing details unavailable")
             }
             withContext(Dispatchers.IO) {
+                stage = "local_tls_pairing"
                 PairingClient(identity).use { client ->
                     val secret = requireNotNull(code)
                     try {
@@ -110,7 +121,9 @@ class LocalPairingDeviceTest {
                 val nonce = pending.nonce.copyOf()
                 try {
                     AdbTransport(identity).use { transport ->
+                        stage = "authorized_tls_connection"
                         transport.connect(LoopbackPort(connectPort))
+                        stage = "authenticated_helper_handoff"
                         transport.bootstrap(BootstrapCommand.forInstalledApp(context), nonce)
                         helper = requireNotNull(withTimeout(5_000) { pending.result.await() })
                     }
@@ -118,8 +131,11 @@ class LocalPairingDeviceTest {
                     nonce.fill(0)
                 }
             }
+            stage = "helper_after_transport_close"
             delay(1_000)
             assertEquals(ShellProtocol.SHELL_UID, requireNotNull(helper).capabilities().getInt("helperUid"))
+        } catch (failure: Exception) {
+            throw AssertionError("Local pairing fixture failed at $stage", failure)
         } finally {
             code?.fill('\u0000')
             helper?.let { runCatching { it.disconnect() } }

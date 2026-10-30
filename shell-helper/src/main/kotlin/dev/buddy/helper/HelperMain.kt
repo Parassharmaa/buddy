@@ -68,10 +68,10 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
             if (helper != null) putBinder("helper", helper)
         }
         stage = "provider_handoff"
-        val result = context.contentResolver.call(
-            packageName + ShellProtocol.AUTHORITY_SUFFIX,
+        val result = ShellBootstrapProvider.call(
+            packageName,
+            expectedUid,
             if (revalidate) ShellProtocol.REVALIDATE else ShellProtocol.HANDOFF,
-            null,
             extras
         )
         check(result?.getBoolean("accepted") == true)
