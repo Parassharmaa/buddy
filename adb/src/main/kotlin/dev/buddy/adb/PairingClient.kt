@@ -18,8 +18,25 @@ import org.conscrypt.Conscrypt
 // Wire format: AOSP android-16.0.0_r1 pairing_connection and pairing_auth.
 class PairingClient(private val identity: AdbIdentity) : Closeable {
     @Volatile private var socket: Socket? = null
+    private val socketLock = Any()
+    private var rawSocket: Socket? = null
+    private var closed = false
+    private var started = false
+
+    private fun own(value: Socket) = synchronized(socketLock) {
+        if (closed) {
+            value.close()
+            error("Pairing client is closed")
+        }
+        if (rawSocket == null) rawSocket = value
+        socket = value
+    }
 
     fun pair(port: LoopbackPort, rawCode: CharSequence): String {
+        synchronized(socketLock) {
+            check(!closed && !started)
+            started = true
+        }
         val code = normalizedPairingCode(rawCode)
         var native: NativeSpake2? = null
         var secret = byteArrayOf()
@@ -27,7 +44,7 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
         var shared = byteArrayOf()
         var exported = byteArrayOf()
         try {
-            val tls = LocalTls(identity).connect(port) { socket = it }
+            val tls = LocalTls(identity).connect(port, ::own)
             val exchange = NativeSpake2().also { native = it }
             exported = Conscrypt.exportKeyingMaterial(tls, "adb-label\u0000", null, 64)
             secret = ByteArray(code.size + exported.size)
@@ -95,8 +112,14 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
     }
 
     override fun close() {
-        socket?.close()
-        socket = null
+        val sockets = synchronized(socketLock) {
+            closed = true
+            listOfNotNull(rawSocket, socket).distinct().also {
+                rawSocket = null
+                socket = null
+            }
+        }
+        sockets.forEach { runCatching { it.close() } }
     }
 }
 

@@ -10,12 +10,28 @@ import java.nio.charset.StandardCharsets
 
 class AdbTransport(private val identity: AdbIdentity) : Closeable {
     @Volatile private var socket: Socket? = null
+    private val socketLock = Any()
+    private var rawSocket: Socket? = null
+    private var closed = false
+    private var started = false
     private var maxPayload = 4096
 
+    private fun own(value: Socket) = synchronized(socketLock) {
+        if (closed) {
+            value.close()
+            error("ADB transport is closed")
+        }
+        if (rawSocket == null) rawSocket = value
+        socket = value
+    }
+
     fun connect(port: LoopbackPort) {
-        close()
+        synchronized(socketLock) {
+            check(!closed && !started)
+            started = true
+        }
         val raw = Socket()
-        socket = raw
+        own(raw)
         raw.connect(InetSocketAddress("127.0.0.1", port.value), 5_000)
         raw.soTimeout = 10_000
         raw.tcpNoDelay = true
@@ -35,7 +51,7 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
         }
         send(AdbPacket(AdbPacket.STLS, 0x01000000, 0))
         val tls = LocalTls(identity).upgrade(raw, port)
-        socket = tls
+        own(tls)
         tls.startHandshake()
         val connected = receive()
         if (connected.command != AdbPacket.CNXN ||
@@ -108,8 +124,14 @@ class AdbTransport(private val identity: AdbIdentity) : Closeable {
     private fun send(packet: AdbPacket) = packet.writeTo(checkNotNull(socket).getOutputStream())
     private fun receive(): AdbPacket = AdbPacket.readFrom(checkNotNull(socket).getInputStream())
     override fun close() {
-        socket?.close()
-        socket = null
+        val sockets = synchronized(socketLock) {
+            closed = true
+            listOfNotNull(rawSocket, socket).distinct().also {
+                rawSocket = null
+                socket = null
+            }
+        }
+        sockets.forEach { runCatching { it.close() } }
     }
 }
 

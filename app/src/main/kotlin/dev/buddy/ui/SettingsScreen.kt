@@ -56,6 +56,7 @@ import dev.buddy.BuddyViewModel
     BackHandler(enabled = section != "Overview") { section = "Overview" }
     val context = LocalContext.current
     val status by model.phone.status.collectAsStateWithLifecycle()
+    val phoneBusy by model.phone.busy.collectAsStateWithLifecycle()
     Column(
         Modifier.widthIn(max = 760.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -129,7 +130,7 @@ import dev.buddy.BuddyViewModel
                         code = ""
                     },
                     enabled =
-                        pairPort.isNotBlank() && code.isNotBlank()
+                        !phoneBusy && pairPort.isNotBlank() && code.isNotBlank()
                 ) { Text("Pair this phone") }
                 HorizontalDivider()
                 OutlinedTextField(
@@ -147,9 +148,9 @@ import dev.buddy.BuddyViewModel
                 )
                 Button(onClick = {
                     model.connect(connectPort)
-                }, enabled = connectPort.isNotBlank()) { Text("Connect and test helper") }
+                }, enabled = !phoneBusy && connectPort.isNotBlank()) { Text("Connect and test helper") }
                 Text(
-                    "Screen observation is not available in this diagnostic build. Protected and credential screens will require you to take over.",
+                    "General app observation is not available in this diagnostic build. Protected and credential screens will require you to take over.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedButton(onClick = { model.disconnect() }) { Text("Disconnect") }
@@ -159,7 +160,7 @@ import dev.buddy.BuddyViewModel
             "Privacy" -> {
                 Text("Your provider: " + if (state.configured) state.modelBase else "Not configured")
                 Text(
-                    "Model keys, conversations and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. Phone observation is disabled in this development build."
+                    "Model keys, conversations and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
                 )
                 Text(
                     "Local history expires after 30 days. Deleting local data does not delete copies retained by your model provider or Android’s paired debugging identity."

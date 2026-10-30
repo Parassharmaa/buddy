@@ -32,6 +32,7 @@ class BootstrapProvider : ContentProvider() {
                 val binder = requireNotNull(data.getBinder("helper"))
                 check(binder.isBinderAlive)
                 val helper = IBuddyHelper.Stub.asInterface(binder)
+                expected.deliveredHelper = helper
                 // Probe on the connection worker after returning; never reenter helper on this Binder thread.
                 expected.result.complete(helper)
             } else {
@@ -58,7 +59,11 @@ class BootstrapProvider : ContentProvider() {
         val nonce: ByteArray,
         val deadline: Long,
         val result: CompletableDeferred<IBuddyHelper?>
-    )
+    ) {
+        @Volatile var deliveredHelper: IBuddyHelper? = null
+            internal set
+        override fun toString(): String = "Pending(redacted)"
+    }
     companion object {
         private val lock = Any()
         private var pending: Pending? = null

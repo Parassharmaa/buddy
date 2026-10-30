@@ -334,10 +334,22 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
         _state.update { it.copy(loaded = false, configured = false) }
         viewModelScope.launch {
             pendingTest?.join()
-            phone.disconnect(true)
-            persistence.withLock { store.clear() }
-            config = null
-            _state.value = BuddyState(loaded = true)
+            val identityRemoved = phone.disconnect(true)
+            try {
+                persistence.withLock { store.clear() }
+                config = null
+                _state.value = BuddyState(
+                    loaded = true,
+                    error = if (identityRemoved) {
+                        null
+                    } else {
+                        "Local data was cleared, but the debugging identity could not be removed. " +
+                            "Try Forget again in Phone connection."
+                    }
+                )
+            } catch (_: Exception) {
+                _state.update { it.copy(loaded = true, error = "Local data could not be cleared. Try again.") }
+            }
         }
     }
     fun pair(port: String, code: String) {
