@@ -12,7 +12,7 @@ device_gradle_args=(--no-daemon --no-parallel --continue
     -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true
     -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000)
 device_result=0
-./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest || device_result=1
+./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest || device_result=1
 # AGP owns installation/cleanup of each instrumentation target. Install the final
 # rebuilt fixture after its own suite, before the independent Buddy suite.
 python3 scripts/check-apk-signatures.py

@@ -9,6 +9,7 @@ import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
@@ -36,6 +37,16 @@ internal class LocalTls(identity: AdbIdentity) {
             } else {
                 null
             }
+            override fun chooseEngineClientAlias(
+                types: Array<out String>?,
+                issuers: Array<out Principal>?,
+                engine: SSLEngine?
+            ): String? = chooseClientAlias(types, issuers, null)
+            override fun chooseEngineServerAlias(
+                type: String?,
+                issuers: Array<out Principal>?,
+                engine: SSLEngine?
+            ): String? = null
             override fun getCertificateChain(alias: String?): Array<X509Certificate>? = if (alias ==
                 "buddy"
             ) {

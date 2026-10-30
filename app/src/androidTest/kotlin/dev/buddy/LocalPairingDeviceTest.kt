@@ -60,6 +60,23 @@ class LocalPairingDeviceTest {
             while (target != null && !target.isClickable) target = target.parent
             check(target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { "Settings control unavailable" }
         }
+        fun allowNetwork() {
+            val controls = nodes()
+            if (controls.any {
+                    it.text?.toString()?.startsWith("Allow wireless debugging", ignoreCase = true) == true
+                }
+            ) {
+                sawConfirmation = true
+                controls.firstOrNull {
+                    it.viewIdResourceName == "android:id/button1" && it.isEnabled
+                }?.let {
+                    click(it)
+                    allowedConfirmation = true
+                }
+            }
+        }
+        fun portIn(text: String): Int? = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})")
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
         try {
             identity.forget()
             stage = "join_emulator_wifi"
@@ -72,35 +89,17 @@ class LocalPairingDeviceTest {
             }
             stage = "enable_wireless_debugging"
             shell("settings put global adb_wifi_enabled 1")
-            stage = "wireless_connection_port"
-            val connectPort = withTimeout(15_000) {
-                var port = 0
-                while (port !in 1..65535) {
-                    delay(200)
-                    val controls = nodes()
-                    if (controls.any {
-                            it.text?.toString()?.startsWith("Allow wireless debugging", ignoreCase = true) == true
-                        }
-                    ) {
-                        sawConfirmation = true
-                        controls.firstOrNull {
-                            it.viewIdResourceName == "android:id/button1" ||
-                                it.text?.toString()?.equals("Allow", ignoreCase = true) == true
-                        }?.let {
-                            click(it)
-                            allowedConfirmation = true
-                        }
-                    }
-                    port = shell("getprop service.adb.tls.port").toIntOrNull() ?: 0
-                }
-                port
-            }
             stage = "open_wireless_settings"
+            // Newer adbd reports its TLS port over the system socket rather than the old
+            // service.adb.tls.port property. Read the public Settings screen on every API.
+            delay(300)
+            allowNetwork()
             context.startActivity(
                 Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
             withTimeout(10_000) {
                 while (true) {
+                    allowNetwork()
                     val controls = nodes()
                     val item = controls.firstOrNull {
                         it.text?.toString()?.equals("Wireless debugging", ignoreCase = true) == true
@@ -113,6 +112,16 @@ class LocalPairingDeviceTest {
                         ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                     delay(150)
                 }
+            }
+            stage = "wireless_connection_port"
+            val connectPort = withTimeout(15_000) {
+                while (true) {
+                    allowNetwork()
+                    nodes().firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
+                        ?.let { return@withTimeout it }
+                    delay(150)
+                }
+                error("Wireless connection details unavailable")
             }
             stage = "open_pairing_dialog"
             withTimeout(10_000) {
@@ -132,11 +141,8 @@ class LocalPairingDeviceTest {
                 while (true) {
                     val text = nodes().mapNotNull { it.text?.toString() }
                     val pairingCode = text.firstOrNull { it.matches(Regex("[0-9]{6}|[0-9]{3} [0-9]{3}")) }
-                    val address = text.firstNotNullOfOrNull {
-                        Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})").find(it)
-                    }
-                    val port = address?.groupValues?.get(1)?.toIntOrNull()
-                    if (pairingCode != null && port != null && port in 1..65535) {
+                    val port = text.firstNotNullOfOrNull(::portIn)
+                    if (pairingCode != null && port != null) {
                         code = pairingCode.toCharArray()
                         return@withTimeout port
                     }

@@ -7,6 +7,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -19,6 +20,9 @@ android {
 }
 dependencies {
     testImplementation(libs.junit)
+    androidTestImplementation(libs.test.runner)
+    androidTestImplementation(libs.test.junit)
+    androidTestImplementation(libs.junit)
     implementation(project(":core"))
     implementation(project(":pairing-native"))
     implementation(libs.coroutines.android)
