@@ -1,6 +1,9 @@
 package dev.buddy
 
+import android.hardware.display.DisplayManager
+import android.os.Binder
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,6 +23,37 @@ import org.junit.runner.RunWith
 // still require the separate wireless transport probe and physical-device qualification.
 @RunWith(AndroidJUnit4::class)
 class AuthorizationProofDeviceTest {
+    @Test fun leaseRenewalCannotKeepAnExpiredAuthorizationOrDisplayAlive() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        AuthenticatedHelperFixture.start(context, instrumentation.uiAutomation).use { fixture ->
+            FixtureFrameSink().use { frames ->
+                val helper = fixture.helper
+                val owner = Binder()
+                val proofDeadline = helper.capabilities().getLong("authorizationDeadline")
+                val lease = requireNotNull(
+                    helper.acquireLease(owner, ByteArray(32).also(SecureRandom()::nextBytes)).getString("lease")
+                )
+                val token = helper.createDisplay(lease, 720, 1280, 240, frames.surface)
+                val displayId = helper.displayState(lease, token).getInt("displayId")
+                assertTrue(displayId > 0)
+                delay(5_000)
+                helper.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
+                assertTrue(helper.capabilities().getLong("authorizationDeadline") == proofDeadline)
+                withTimeout(35_000) {
+                    while (SystemClock.elapsedRealtime() <= proofDeadline) delay(100)
+                    assertThrows(IllegalStateException::class.java) {
+                        helper.renewLease(lease, ByteArray(32).also(SecureRandom()::nextBytes))
+                    }
+                    // The helper's watchdog releases its surface even without any further app IPC.
+                    val manager = context.getSystemService(DisplayManager::class.java)
+                    while (manager.getDisplay(displayId)?.isValid == true) delay(50)
+                }
+                assertTrue(owner.isBinderAlive)
+            }
+        }
+    }
+
     @Test fun onlyANewAuthenticatedShellProcessCanCompleteAOneTimeProof() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
