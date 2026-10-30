@@ -123,8 +123,8 @@ class EncryptedStore(context: Context) : ActionJournal {
     }
     override suspend fun update(record: ActionRecord) = database.withTransaction {
         put("action:${record.proposal.id}", "action", json.encodeToString(record))
-        if (record.state == DispatchState.VERIFIED &&
-            record.evidenceIds.isNotEmpty()
+        if (record.state == DispatchState.NOT_DISPATCHED ||
+            (record.state == DispatchState.VERIFIED && record.evidenceIds.isNotEmpty())
         ) {
             dao.remove("barrier:${record.proposal.operationKey}")
         }

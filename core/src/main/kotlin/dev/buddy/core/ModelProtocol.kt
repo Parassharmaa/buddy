@@ -88,6 +88,9 @@ class StreamingReply {
         }
         require(toolCalls.map { it.id }.distinct().size == toolCalls.size)
         require((finish == "tool_calls") == toolCalls.isNotEmpty())
+        if (text.isBlank() && toolCalls.isEmpty()) {
+            throw ModelFailure("protocol", "The model returned no answer or tool call.")
+        }
         return ModelReply(
             ChatMessage(
                 "assistant",

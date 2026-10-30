@@ -41,4 +41,10 @@ class StreamingReplyTest {
         )
         assertThrows(IllegalArgumentException::class.java) { duplicate.finish() }
     }
+
+    @Test fun anEmptyCompletionCannotBecomeASuccessfulRun() {
+        val parser = StreamingReply()
+        parser.accept("""{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}""")
+        assertThrows(ModelFailure::class.java) { parser.finish() }
+    }
 }

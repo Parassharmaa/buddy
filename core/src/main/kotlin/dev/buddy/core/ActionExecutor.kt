@@ -95,10 +95,11 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
         // Recheck cancellation/lock after durable intent commit and immediately before IPC.
         val finalGate = gate()
         if (finalGate != preflight ||
+            now() - observation.capturedAtElapsedMs !in 0..5_000 ||
             now() >= minOf(finalGate.leaseDeadline, finalGate.authorizationDeadline)
         ) {
-            journal.markUncertain(record)
-            return@withLock ExecutionResult.Uncertain
+            journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+            return@withLock ExecutionResult.Blocked("Observe the screen again before continuing")
         }
         try {
             dispatch()

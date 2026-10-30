@@ -3,6 +3,7 @@ package dev.buddy.core
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -16,7 +17,7 @@ class ExecutorTest {
     private val approval =
         Approval("p1", "r1", action.operationKey, "fingerprint", 10_000, accepted = true)
     private val gate = DispatchGate(false, false, false, true, true, 20_000, 20_000, false)
-    private class Journal : ActionJournal {
+    private class Journal(private val afterBegin: () -> Unit = {}) : ActionJournal {
         val barriers = mutableSetOf<String>()
         val consumed = mutableSetOf<String>()
         val records = mutableListOf<ActionRecord>()
@@ -25,12 +26,11 @@ class ExecutorTest {
             check(approval == null || consumed.add(approval.id))
             records += record
             barriers += record.proposal.operationKey
+            afterBegin()
         }
         override suspend fun update(record: ActionRecord) {
             records += record
-            if (record.state ==
-                DispatchState.VERIFIED
-            ) {
+            if (record.state in setOf(DispatchState.VERIFIED, DispatchState.NOT_DISPATCHED)) {
                 barriers.remove(record.proposal.operationKey)
             }
         }
@@ -146,5 +146,29 @@ class ExecutorTest {
                 observation.copy(nodes = listOf(node.copy(password = false, packageName = "bank")))
             ) is FilteredObservation.Suppressed
         )
+    }
+
+    @Test fun operationHashCannotBeConfusedByNulInUserText() {
+        val first = action.copy(target = "Alice\u0000Hello", payload = "World")
+        val second = action.copy(target = "Alice", payload = "Hello\u0000World")
+        assertNotEquals(first.operationKey, second.operationKey)
+    }
+
+    @Test fun observationCannotExpireDuringDurableCommit() = runTest {
+        var clock = 2_000L
+        val journal = Journal { clock = 7_001L }
+        var dispatched = false
+        val result = ActionExecutor(journal) { clock }.execute(
+            action,
+            observation,
+            approval,
+            { gate },
+            { dispatched = true },
+            { listOf("e1") }
+        )
+        assertTrue(result is ExecutionResult.Blocked)
+        assertTrue(!dispatched)
+        assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertTrue(!journal.unresolved(action.operationKey))
     }
 }

@@ -85,7 +85,7 @@ data class ActionProposal(
 ) {
     // Semantic classification must come from a local supported-action adapter, never the model.
     val operationKey: String get() = sha256(
-        listOf(effect.name, app, target, payload, destination).joinToString("\u0000")
+        listOf(effect.name, app, target, payload, destination).joinToString("") { "${it.length}:$it" }
     )
 }
 
@@ -101,7 +101,7 @@ data class Approval(
 )
 
 @Serializable
-enum class DispatchState { PREPARED, DISPATCHING, DISPATCHED, VERIFIED, UNCERTAIN }
+enum class DispatchState { PREPARED, DISPATCHING, DISPATCHED, VERIFIED, UNCERTAIN, NOT_DISPATCHED }
 
 @Serializable
 data class ActionRecord(
