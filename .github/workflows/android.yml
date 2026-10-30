@@ -75,7 +75,7 @@ jobs:
           profile: pixel_7
           emulator-build: '16696583'
           emulator-boot-timeout: 300
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -memory 2048 -cores 2
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader -memory 4096 -cores 2
           disable-animations: true
           script: bash scripts/check-device.sh
 
