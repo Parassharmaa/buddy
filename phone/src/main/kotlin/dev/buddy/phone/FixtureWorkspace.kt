@@ -22,7 +22,9 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -213,6 +215,7 @@ class FixtureWorkspace private constructor(
                     check(!fresh.observation.credentialSurface && !fresh.observation.excludedOverlay)
                     val node = requireNotNull(fresh.nodes[prepared.nodeId])
                     check(node.isVisibleToUser)
+                    currentCoroutineContext().ensureActive()
                     when (prepared.kind) {
                         FixtureActionKind.DRAFT -> FixtureScreenService.edit(
                             fresh,

@@ -1,8 +1,12 @@
 package dev.buddy.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 interface ActionJournal {
     suspend fun unresolved(operationKey: String): Boolean
@@ -92,16 +96,23 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
         }
         val record = ActionRecord(action, DispatchState.DISPATCHING)
         journal.begin(record, if (needsApproval) approval else null)
-        // Recheck cancellation/lock after durable intent commit and immediately before IPC.
-        val finalGate = gate()
-        if (finalGate != preflight ||
-            now() - observation.capturedAtElapsedMs !in 0..5_000 ||
-            now() >= minOf(finalGate.leaseDeadline, finalGate.authorizationDeadline)
-        ) {
-            journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
-            return@withLock ExecutionResult.Blocked("Observe the screen again before continuing")
-        }
+        var dispatchStarted = false
         try {
+            // Recheck cancellation/lock after durable intent commit and immediately before IPC.
+            val finalGate = gate()
+            if (finalGate != preflight ||
+                now() - observation.capturedAtElapsedMs !in 0..5_000 ||
+                now() >= minOf(finalGate.leaseDeadline, finalGate.authorizationDeadline)
+            ) {
+                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                return@withLock ExecutionResult.Blocked("Observe the screen again before continuing")
+            }
+            if (needsApproval && requireNotNull(approval).expiresAtElapsedMs <= now()) {
+                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                return@withLock ExecutionResult.ApprovalRequired
+            }
+            currentCoroutineContext().ensureActive()
+            dispatchStarted = true
             dispatch()
             journal.update(record.copy(state = DispatchState.DISPATCHED))
             val evidence = verify()
@@ -113,13 +124,22 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
                 ExecutionResult.Verified(evidence)
             }
         } catch (cancelled: CancellationException) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                journal.markUncertain(record)
+            withContext(NonCancellable) {
+                if (dispatchStarted) {
+                    journal.markUncertain(record)
+                } else {
+                    journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                }
             }
             throw cancelled
         } catch (_: Exception) {
-            journal.markUncertain(record)
-            ExecutionResult.Uncertain
+            if (dispatchStarted) {
+                journal.markUncertain(record)
+                ExecutionResult.Uncertain
+            } else {
+                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                ExecutionResult.Blocked("Phone control could not be checked before dispatch")
+            }
         }
     }
 }

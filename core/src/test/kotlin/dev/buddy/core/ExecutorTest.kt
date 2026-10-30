@@ -2,7 +2,9 @@ package dev.buddy.core
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -173,6 +175,69 @@ class ExecutorTest {
         )
         assertTrue(result is ExecutionResult.Blocked)
         assertTrue(!dispatched)
+        assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertTrue(!journal.unresolved(action.operationKey))
+    }
+
+    @Test fun approvalCannotExpireDuringDurableCommit() = runTest {
+        var clock = 2_000L
+        val journal = Journal { clock = 3_000L }
+        var writes = 0
+        val result = ActionExecutor(journal) { clock }.execute(
+            action,
+            observation,
+            approval.copy(expiresAtElapsedMs = 2_500),
+            { gate },
+            { writes++ },
+            { listOf("e1") }
+        )
+        assertEquals(ExecutionResult.ApprovalRequired, result)
+        assertEquals(0, writes)
+        assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertTrue(!journal.unresolved(action.operationKey))
+        assertEquals(setOf(approval.id), journal.consumed)
+    }
+
+    @Test fun cancellationDuringDurableCommitCannotReachANonSuspendingDispatch() = runTest {
+        var writes = 0
+        lateinit var journal: Journal
+        val running = launch {
+            val context = currentCoroutineContext()
+            journal = Journal { context.cancel() }
+            ActionExecutor(journal) { 2_000 }.execute(
+                action,
+                observation,
+                approval,
+                { gate },
+                { writes++ },
+                { listOf("e1") }
+            )
+        }
+        running.join()
+        assertTrue(running.isCancelled)
+        assertEquals(0, writes)
+        assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertTrue(!journal.unresolved(action.operationKey))
+        assertEquals(setOf(approval.id), journal.consumed)
+    }
+
+    @Test fun cancellationDuringTheFinalGateClearsTheUndispatchedIntent() = runTest {
+        val checking = CompletableDeferred<Unit>()
+        val journal = Journal()
+        var gates = 0
+        var writes = 0
+        val running = launch {
+            ActionExecutor(journal) { 2_000 }.execute(action, observation, approval, {
+                if (++gates == 2) {
+                    checking.complete(Unit)
+                    awaitCancellation()
+                }
+                gate
+            }, { writes++ }, { listOf("e1") })
+        }
+        checking.await()
+        running.cancelAndJoin()
+        assertEquals(0, writes)
         assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
         assertTrue(!journal.unresolved(action.operationKey))
     }
