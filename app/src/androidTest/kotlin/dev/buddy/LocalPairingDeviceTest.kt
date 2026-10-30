@@ -52,6 +52,11 @@ class LocalPairingDeviceTest {
         var allowedConfirmation = false
         var physicalWindowCount = 0
         var settingsVisible = false
+        var wifiSupported = false
+        var settingsLaunched = false
+        var developerTitleSeen = false
+        var scrollableSeen = false
+        var scrollAttempts = 0
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -101,6 +106,9 @@ class LocalPairingDeviceTest {
             .find(text)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
         try {
             identity.forget()
+            stage = "wireless_support"
+            wifiSupported = shell("cmd adb is-wifi-supported") == "true"
+            check(wifiSupported) { "Wireless debugging is unavailable on this emulator" }
             stage = "join_emulator_wifi"
             shell("svc wifi enable")
             if (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) {
@@ -116,21 +124,37 @@ class LocalPairingDeviceTest {
             // service.adb.tls.port property. Read the public Settings screen on every API.
             delay(300)
             allowNetwork()
-            shell("am start -W -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS")
+            settingsLaunched = shell("am start -W -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS")
+                .contains("Status: ok", ignoreCase = true)
+            var forward = true
             withTimeout(10_000) {
                 while (true) {
                     allowNetwork()
                     val controls = nodes()
+                    developerTitleSeen = developerTitleSeen || controls.any {
+                        it.text?.toString()?.contains("Developer options", ignoreCase = true) == true
+                    }
                     val item = controls.firstOrNull {
-                        it.text?.toString()?.equals("Wireless debugging", ignoreCase = true) == true
+                        it.packageName?.toString() == "com.android.settings" && it.isVisibleToUser &&
+                            it.text?.toString()?.contains("Wireless debugging", ignoreCase = true) == true
                     }
                     if (item != null) {
                         click(item)
                         break
                     }
-                    controls.firstOrNull { it.isScrollable }
-                        ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                    delay(150)
+                    controls.firstOrNull {
+                        it.isScrollable && it.packageName?.toString() == "com.android.settings"
+                    }?.let { scrollable ->
+                        scrollableSeen = true
+                        scrollAttempts++
+                        val action = if (forward) {
+                            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                        } else {
+                            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                        }
+                        if (!scrollable.performAction(action)) forward = !forward
+                    }
+                    delay(400)
                 }
             }
             stage = "wireless_connection_port"
@@ -147,7 +171,8 @@ class LocalPairingDeviceTest {
             withTimeout(10_000) {
                 while (true) {
                     val item = nodes().firstOrNull {
-                        it.text?.toString()?.equals("Pair device with pairing code", ignoreCase = true) == true
+                        it.packageName?.toString() == "com.android.settings" && it.isVisibleToUser &&
+                            it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true
                     }
                     if (item != null) {
                         click(item)
@@ -227,7 +252,9 @@ class LocalPairingDeviceTest {
             throw AssertionError(
                 "Local pairing fixture failed at $stage; enabled=$enabled; tls=$tls; secure=$secure; " +
                     "confirmation=$sawConfirmation; allowed=$allowedConfirmation; " +
-                    "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible",
+                    "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible; " +
+                    "supported=$wifiSupported; launched=$settingsLaunched; developerTitle=$developerTitleSeen; " +
+                    "scrollable=$scrollableSeen; scrolls=$scrollAttempts",
                 failure
             )
         } finally {
