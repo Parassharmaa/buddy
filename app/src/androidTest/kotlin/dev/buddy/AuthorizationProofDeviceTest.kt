@@ -2,7 +2,9 @@ package dev.buddy
 
 import android.hardware.display.DisplayManager
 import android.os.Binder
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -16,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -23,6 +26,48 @@ import org.junit.runner.RunWith
 // still require the separate wireless transport probe and physical-device qualification.
 @RunWith(AndroidJUnit4::class)
 class AuthorizationProofDeviceTest {
+    @Test fun screenOffRejectsOwnedDisplayAccessUntilTheUserReturns() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
+        assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val automation = instrumentation.uiAutomation
+        fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
+            automation.executeShellCommand(command)
+        ).use {
+            it.readNBytes(512)
+            Unit
+        }
+        AuthenticatedHelperFixture.start(context, automation).use { fixture ->
+            FixtureFrameSink().use { frames ->
+                val helper = fixture.helper
+                val owner = Binder()
+                val lease = requireNotNull(
+                    helper.acquireLease(owner, ByteArray(32).also(SecureRandom()::nextBytes)).getString("lease")
+                )
+                val token = helper.createDisplay(lease, 720, 1280, 240, frames.surface)
+                val display = helper.displayState(lease, token).getInt("displayId")
+                try {
+                    shell("input keyevent KEYCODE_SLEEP")
+                    val power = context.getSystemService(PowerManager::class.java)
+                    withTimeout(3_000) { while (power.isInteractive) delay(25) }
+                    assertThrows(IllegalStateException::class.java) { helper.displayState(lease, token) }
+                    assertThrows(IllegalStateException::class.java) {
+                        helper.tap(lease, token, "screen-off-input", 10, 10)
+                    }
+                } finally {
+                    shell("input keyevent KEYCODE_WAKEUP")
+                    shell("wm dismiss-keyguard")
+                }
+                withTimeout(3_000) {
+                    while (!context.getSystemService(PowerManager::class.java).isInteractive) delay(25)
+                }
+                assertTrue(helper.displayState(lease, token).getInt("displayId") == display)
+                assertTrue(owner.isBinderAlive)
+            }
+        }
+    }
+
     @Test fun leaseRenewalCannotKeepAnExpiredAuthorizationOrDisplayAlive() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
