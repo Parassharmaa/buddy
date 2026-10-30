@@ -39,6 +39,7 @@ android {
     }
 }
 dependencies {
+    compileOnly(project(":platform-api"))
     implementation(libs.work.runtime)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.test.uiautomator)

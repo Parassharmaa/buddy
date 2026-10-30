@@ -31,6 +31,8 @@ with tempfile.TemporaryFile() as output:
         if event != "end" or element.tag != "class":
             continue
         name = package + "." + element.get("name", "")
+        if name.startswith("android.window.WindowInfosListener") or name == "android.view.InputWindowHandle":
+            raise SystemExit("Compile-only Android platform declarations were packaged in the APK")
         if name in expected:
             methods = element.findall("method")
             if name.endswith("Main"):

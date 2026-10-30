@@ -20,6 +20,7 @@ include(
     ":pairing-native",
     ":shell-api",
     ":shell-helper",
+    ":platform-api",
     ":phone",
     ":storage",
     ":designsystem",

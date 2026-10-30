@@ -27,6 +27,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val width: Int,
         val height: Int,
         var fixtureRoot: Int? = null,
+        var fixtureUid: Int = -1,
         var launchAttempted: Boolean = false,
         var handedOver: Boolean = false
     )
@@ -194,7 +195,12 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         display.fixtureRoot?.let {
             ShellActivityAdapter.verifyOwnedFixture(it, display.display.display.displayId, appUid)
         }
+        val privacy = WindowPrivacy.inspect(display.display.display.displayId, display.fixtureUid)
         Bundle().apply {
+            putInt("windowMetadataStatus", privacy.status.ordinal)
+            putBoolean("windowMetadataKnown", privacy.known)
+            putBoolean("secureWindow", privacy.secure)
+            putBoolean("mixedWindowOwners", privacy.mixed)
             putInt("displayId", display.display.display.displayId)
             putInt("width", display.width)
             putInt("height", display.height)
@@ -220,6 +226,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         }
         // Engineering spike launches only Buddy's controlled fixture; arbitrary app launch is gated later.
         display.launchAttempted = true
+        display.fixtureUid = requireNotNull(fixture.applicationInfo).uid
         display.fixtureRoot = ShellActivityAdapter.launchFixture(display.display.display.displayId, appUid)
         display.display.display.displayId
     }

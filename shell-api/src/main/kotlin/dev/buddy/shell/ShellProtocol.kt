@@ -1,7 +1,7 @@
 package dev.buddy.shell
 
 object ShellProtocol {
-    const val VERSION = 4
+    const val VERSION = 5
     const val SHELL_UID = 2000
     const val LEASE_MS = 30_000L
     const val AUTHORITY_SUFFIX = ".bootstrap"

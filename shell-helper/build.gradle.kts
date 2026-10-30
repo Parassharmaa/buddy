@@ -19,6 +19,7 @@ android {
     }
 }
 dependencies {
+    compileOnly(project(":platform-api"))
     testImplementation(libs.junit)
     implementation(project(":shell-api"))
 }
