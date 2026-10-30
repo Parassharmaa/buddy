@@ -1,5 +1,6 @@
 package dev.buddy
 
+import android.app.KeyguardManager
 import android.hardware.display.DisplayManager
 import android.os.Binder
 import android.os.Build
@@ -60,7 +61,12 @@ class AuthorizationProofDeviceTest {
                     shell("wm dismiss-keyguard")
                 }
                 withTimeout(3_000) {
-                    while (!context.getSystemService(PowerManager::class.java).isInteractive) delay(25)
+                    val keyguard = context.getSystemService(KeyguardManager::class.java)
+                    while (!context.getSystemService(PowerManager::class.java).isInteractive ||
+                        keyguard.isDeviceLocked || keyguard.isKeyguardLocked
+                    ) {
+                        delay(25)
+                    }
                 }
                 assertTrue(helper.displayState(lease, token).getInt("displayId") == display)
                 assertTrue(owner.isBinderAlive)

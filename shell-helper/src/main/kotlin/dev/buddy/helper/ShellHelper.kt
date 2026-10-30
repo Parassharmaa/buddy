@@ -303,7 +303,8 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     }
     private fun owned(value: String, token: String, allowTakeover: Boolean = false): OwnedDisplay {
         validLease(value)
-        check(!context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
+        val keyguard = context.getSystemService(KeyguardManager::class.java)
+        check(!keyguard.isDeviceLocked && !keyguard.isKeyguardLocked)
         check(context.getSystemService(PowerManager::class.java).isInteractive)
         return requireNotNull(displays[token]).also {
             check(it.display.display.isValid && (allowTakeover || !it.handedOver))

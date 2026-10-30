@@ -192,6 +192,7 @@ class FixtureWorkspace private constructor(
                 approval,
                 gate = {
                     val requested = gate()
+                    val keyguard = context.getSystemService(KeyguardManager::class.java)
                     val owns = runCatching {
                         validateDisplay()
                         true
@@ -199,7 +200,7 @@ class FixtureWorkspace private constructor(
                     requested.copy(
                         ownsApp = requested.ownsApp && owns,
                         locked =
-                            requested.locked || context.getSystemService(KeyguardManager::class.java).isDeviceLocked ||
+                            requested.locked || keyguard.isDeviceLocked || keyguard.isKeyguardLocked ||
                                 !context.getSystemService(PowerManager::class.java).isInteractive,
                         takeover = requested.takeover || handedOver,
                         leaseDeadline = minOf(requested.leaseDeadline, deadline),
