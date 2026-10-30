@@ -19,6 +19,7 @@ class AdbIdentity {
     @Synchronized
     fun load(): Pair<PrivateKey, X509Certificate> {
         if (!store.containsAlias(ALIAS)) {
+            store.deleteEntry(LEGACY_ALIAS)
             val generator = KeyPairGenerator.getInstance(
                 KeyProperties.KEY_ALGORITHM_RSA,
                 "AndroidKeyStore"
@@ -29,7 +30,10 @@ class AdbIdentity {
                     KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
                 )
                     .setKeySize(2048)
-                    .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+                    // Conscrypt's TLS callback signs an already encoded RSA block. Authorize
+                    // that raw operation on this dedicated, non-exportable ADB identity.
+                    .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                     .setSignaturePaddings(
                         KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
                         KeyProperties.SIGNATURE_PADDING_RSA_PSS
@@ -47,6 +51,7 @@ class AdbIdentity {
     @Synchronized
     fun forget() {
         store.deleteEntry(ALIAS)
+        store.deleteEntry(LEGACY_ALIAS)
     }
 
     fun publicKeyWire(): ByteArray {
@@ -64,6 +69,7 @@ class AdbIdentity {
     }
 
     companion object {
-        private const val ALIAS = "buddy.adb.identity.v1"
+        private const val ALIAS = "buddy.adb.identity.v2"
+        private const val LEGACY_ALIAS = "buddy.adb.identity.v1"
     }
 }
