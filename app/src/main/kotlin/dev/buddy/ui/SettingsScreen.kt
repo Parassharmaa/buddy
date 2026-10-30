@@ -1,8 +1,12 @@
 package dev.buddy.ui
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +53,7 @@ import dev.buddy.BuddyViewModel
 
 @Composable internal fun SettingsScreen(state: BuddyState, model: BuddyViewModel) {
     var section by rememberSaveable { mutableStateOf("Overview") }
+    BackHandler(enabled = section != "Overview") { section = "Overview" }
     val context = LocalContext.current
     val status by model.phone.status.collectAsStateWithLifecycle()
     Column(
@@ -143,11 +148,8 @@ import dev.buddy.BuddyViewModel
                 Button(onClick = {
                     model.connect(connectPort)
                 }, enabled = connectPort.isNotBlank()) { Text("Connect and test helper") }
-                OutlinedButton(onClick = {
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }) { Text("Open screen access settings") }
                 Text(
-                    "Screen access allows reading app controls. Buddy is a general assistant, not a verified accessibility tool. Protected and credential screens require you to take over.",
+                    "Screen observation is not available in this diagnostic build. Protected and credential screens will require you to take over.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedButton(onClick = { model.disconnect() }) { Text("Disconnect") }
@@ -199,6 +201,7 @@ import dev.buddy.BuddyViewModel
 }
 
 @Composable private fun ModelSettings(state: BuddyState, model: BuddyViewModel) {
+    val context = LocalContext.current
     var base by rememberSaveable(state.modelBase) { mutableStateOf(state.modelBase) }
     var name by rememberSaveable(state.modelName) { mutableStateOf(state.modelName) }
     var key by remember { mutableStateOf("") }
@@ -254,6 +257,20 @@ import dev.buddy.BuddyViewModel
         "HTTP is limited to explicit local IP addresses and localhost. Traffic to those endpoints is unencrypted.",
         style = MaterialTheme.typography.bodySmall
     )
+    if (Build.VERSION.SDK_INT >= 37) {
+        var granted by remember {
+            mutableStateOf(
+                context.checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) ==
+                    PackageManager.PERMISSION_GRANTED
+            )
+        }
+        val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
+        Text("Models on your Wi-Fi network require local network access.", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(
+            onClick = { permission.launch(android.Manifest.permission.ACCESS_LOCAL_NETWORK) },
+            enabled = !granted
+        ) { Text(if (granted) "Local network allowed" else "Allow local network models") }
+    }
     Button(
         onClick = {
             model.saveModel(base, name, key, local)

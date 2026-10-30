@@ -39,6 +39,14 @@ class SetupUiTest {
         compose.onNodeWithText("Delete all local data").performClick()
         compose.onNodeWithText("Keep data").performClick()
         compose.onNodeWithText("Delete all local data").assertIsDisplayed()
+        compose.onNodeWithText("Back to settings").performClick()
+        compose.onNodeWithText("Phone connection").performClick()
+        compose.onNodeWithText("Not connected").assertIsDisplayed()
+        screenshot("04-phone-setup")
+        compose.onNodeWithText("Back to settings").performClick()
+        compose.onNodeWithText("Diagnostics").performClick()
+        compose.onNodeWithText("Diagnostics").assertIsDisplayed()
+        screenshot("05-diagnostics")
     }
 
     private fun screenshot(name: String) {
