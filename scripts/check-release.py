@@ -16,7 +16,10 @@ for apk in (app, Path("fixture/build/outputs/apk/release/fixture-release-unsigne
         check=True, capture_output=True,
     )
 
-expected = {"dev.buddy.helper.HelperMain", "dev.buddy.helper.RevalidateMain", "dev.buddy.pairing.NativeSpake2"}
+expected = {
+    "dev.buddy.helper.HelperMain", "dev.buddy.helper.RevalidateMain",
+    "dev.buddy.pairing.NativeSpake2", "dev.buddy.HistoryRetentionWorker",
+}
 found = set()
 with tempfile.TemporaryFile() as output:
     subprocess.run([str(tools / "dexdump"), "-l", "xml", str(app)], stdout=output, check=True)
@@ -36,6 +39,13 @@ with tempfile.TemporaryFile() as output:
                     and method.get("visibility") == "public" and method.get("return") == "void"
                     and [parameter.get("type") for parameter in method.findall("parameter")] == ["java.lang.String[]"]
                     for method in methods
+                )
+            elif name.endswith("HistoryRetentionWorker"):
+                valid = any(
+                    constructor.get("visibility") == "public"
+                    and [parameter.get("type") for parameter in constructor.findall("parameter")]
+                    == ["android.content.Context", "androidx.work.WorkerParameters"]
+                    for constructor in element.findall("constructor")
                 )
             else:
                 natives = {method.get("name") for method in methods if method.get("native") == "true"}
