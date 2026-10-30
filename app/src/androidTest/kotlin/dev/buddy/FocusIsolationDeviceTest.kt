@@ -47,6 +47,10 @@ class FocusIsolationDeviceTest {
         var virtualRoots = 0
         var virtualEditorSeen = false
         var draftAccepted = false
+        var virtualActionDisplay = -1
+        var virtualDraftLength = -1
+        var physicalDraftPreserved = false
+        var physicalReceivedVirtualDraft = false
         try {
             AuthenticatedHelperFixture.start(instrumentation.targetContext, automation).use { fixture ->
                 FixtureFrameSink().use { frames ->
@@ -78,6 +82,9 @@ class FocusIsolationDeviceTest {
                         virtualRoots = windows.count { it.root?.packageName?.toString() == "dev.buddy.fixture" }
                         val editor = ui.node(display) { it.isEditable }
                         virtualEditorSeen = true
+                        virtualActionDisplay = editor.window?.displayId ?: -1
+                        stage = "verify_virtual_node_scope"
+                        check(virtualActionDisplay == display)
                         stage = "virtual_unicode_draft"
                         val message = "こんにちは · café"
                         draftAccepted = editor.performAction(
@@ -91,6 +98,10 @@ class FocusIsolationDeviceTest {
                         )
                         assertTrue(draftAccepted)
                         stage = "verify_virtual_unicode_draft"
+                        val physicalAfter = ui.node(0) { it.isEditable }.text?.toString()
+                        physicalDraftPreserved = physicalAfter == "physicalone"
+                        physicalReceivedVirtualDraft = physicalAfter == message
+                        virtualDraftLength = ui.node(display) { it.isEditable }.text?.length ?: -1
                         ui.node(display) { it.isEditable && it.text?.toString() == message }
                         val send = ui.node(display) { it.text?.toString() == "Send to fixture inbox" }
                         val bounds = Rect().also(send::getBoundsInScreen)
@@ -118,7 +129,9 @@ class FocusIsolationDeviceTest {
         } catch (failure: Exception) {
             throw AssertionError(
                 "Focus isolation fixture failed at $stage; virtualWindows=$virtualWindows; " +
-                    "virtualRoots=$virtualRoots; editorSeen=$virtualEditorSeen; draftAccepted=$draftAccepted",
+                    "virtualRoots=$virtualRoots; editorSeen=$virtualEditorSeen; draftAccepted=$draftAccepted; " +
+                    "actionDisplay=$virtualActionDisplay; virtualDraftLength=$virtualDraftLength; " +
+                    "physicalPreserved=$physicalDraftPreserved; physicalReceivedVirtual=$physicalReceivedVirtualDraft",
                 failure
             )
         } finally {

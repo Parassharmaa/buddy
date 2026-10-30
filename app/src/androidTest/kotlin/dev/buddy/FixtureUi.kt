@@ -26,6 +26,7 @@ internal fun findFixtureNode(
     depth: Int = 0
 ): AccessibilityNodeInfo? {
     if (depth > 20 || node.packageName?.toString() != "dev.buddy.fixture") return null
+    if (!node.refresh() || node.packageName?.toString() != "dev.buddy.fixture") return null
     if (predicate(node)) return node
     for (index in 0 until node.childCount) {
         node.getChild(index)?.let { child -> findFixtureNode(child, predicate, depth + 1)?.let { return it } }
