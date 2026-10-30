@@ -1,7 +1,9 @@
 package dev.buddy
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -32,6 +34,11 @@ class LocalPairingDeviceTest {
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val automation = instrumentation.uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         val context = instrumentation.targetContext
         fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
             automation.executeShellCommand(command)
@@ -43,14 +50,31 @@ class LocalPairingDeviceTest {
         var stage = "enable_wireless_debugging"
         var sawConfirmation = false
         var allowedConfirmation = false
+        var physicalWindowCount = 0
+        var settingsVisible = false
         fun nodes(): List<AccessibilityNodeInfo> {
+            automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo, depth: Int) {
                 if (depth > 20 || result.size >= 500) return
                 result += node
                 for (index in 0 until node.childCount) node.getChild(index)?.let { visit(it, depth + 1) }
             }
-            automation.rootInActiveWindow?.let { visit(it, 0) }
+            // Previous probes use virtual displays. The global active window may still refer
+            // to one of them; Android's pairing UI must be read explicitly on the main display.
+            val windows = automation.windowsOnAllDisplays.get(Display.DEFAULT_DISPLAY).orEmpty()
+            physicalWindowCount = windows.size
+            val roots = windows.mapNotNull { window -> window.root?.let { it to window.isFocused } }
+            settingsVisible = roots.any { it.first.packageName?.toString() == "com.android.settings" }
+            val focused = roots.firstOrNull {
+                it.second && it.first.packageName?.toString() in setOf("com.android.settings", "com.android.systemui")
+            }?.first
+            val target = focused ?: roots.firstOrNull {
+                it.first.packageName?.toString() == "com.android.settings"
+            }?.first ?: roots.firstOrNull {
+                it.first.packageName?.toString() == "com.android.systemui"
+            }?.first
+            target?.let { visit(it, 0) }
             return result
         }
         fun click(node: AccessibilityNodeInfo) {
@@ -197,9 +221,13 @@ class LocalPairingDeviceTest {
             val enabled = runCatching { shell("settings get global adb_wifi_enabled") == "1" }.getOrNull()
             val tls = runCatching { shell("getprop persist.adb.tls_server.enable") == "1" }.getOrNull()
             val secure = runCatching { shell("getprop ro.adb.secure") == "1" }.getOrNull()
+            val developer = runCatching {
+                shell("settings get global development_settings_enabled") == "1"
+            }.getOrNull()
             throw AssertionError(
                 "Local pairing fixture failed at $stage; enabled=$enabled; tls=$tls; secure=$secure; " +
-                    "confirmation=$sawConfirmation; allowed=$allowedConfirmation",
+                    "confirmation=$sawConfirmation; allowed=$allowedConfirmation; " +
+                    "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible",
                 failure
             )
         } finally {
@@ -208,6 +236,7 @@ class LocalPairingDeviceTest {
             BootstrapProvider.clear()
             identity.forget()
             if (original != "1") shell("settings put global adb_wifi_enabled 0")
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
         }
     }
 }
