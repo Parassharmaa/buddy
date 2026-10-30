@@ -96,18 +96,20 @@ class HelperDeviceTest {
             assertThrows(IllegalArgumentException::class.java) {
                 connected.tap(lease, display.toString(), UUID.randomUUID().toString(), 10, 10)
             }
-            suspend fun node(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo =
-                withTimeout(5_000) {
-                    while (true) {
-                        val windows = automation.windowsOnAllDisplays.get(display).orEmpty()
-                        val found = windows.firstNotNullOfOrNull { window ->
-                            window.root?.let { find(it, predicate) }
-                        }
-                        if (found != null) return@withTimeout found
-                        delay(100)
+            suspend fun node(
+                onDisplay: Int = display,
+                predicate: (AccessibilityNodeInfo) -> Boolean
+            ): AccessibilityNodeInfo = withTimeout(5_000) {
+                while (true) {
+                    val windows = automation.windowsOnAllDisplays.get(onDisplay).orEmpty()
+                    val found = windows.firstNotNullOfOrNull { window ->
+                        window.root?.let { find(it, predicate) }
                     }
-                    error("No fixture window")
+                    if (found != null) return@withTimeout found
+                    delay(100)
                 }
+                error("No fixture window")
+            }
             val editor = node { it.isEditable }
             val text = "こんにちは Buddy · café"
             assertTrue(
@@ -124,6 +126,13 @@ class HelperDeviceTest {
             connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
             node { it.text?.toString() == "Sent to Alice: $text" }
             withTimeout(5_000) { while (frameCount.get() == 0) delay(50) }
+            connected.takeOverFixture(lease, token, UUID.randomUUID().toString())
+            node(0) { it.text?.toString() == "Sent to Alice: $text" }
+            assertThrows(IllegalStateException::class.java) {
+                connected.tap(lease, token, UUID.randomUUID().toString(), bounds.centerX(), bounds.centerY())
+            }
+            connected.returnFixture(lease, token, UUID.randomUUID().toString())
+            node { it.text?.toString() == "Sent to Alice: $text" }
             connected.releaseDisplay(lease, token)
             assertThrows(IllegalArgumentException::class.java) {
                 connected.tap(lease, token, UUID.randomUUID().toString(), 10, 10)

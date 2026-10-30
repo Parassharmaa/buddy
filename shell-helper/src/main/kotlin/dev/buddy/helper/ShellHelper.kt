@@ -20,7 +20,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 internal class ShellHelper(private val context: Context, private val appUid: Int) : IBuddyHelper.Stub() {
-    private data class OwnedDisplay(val display: VirtualDisplay, val width: Int, val height: Int)
+    private data class OwnedDisplay(
+        val display: VirtualDisplay,
+        val width: Int,
+        val height: Int,
+        var fixtureRoot: Int? = null,
+        var launchAttempted: Boolean = false,
+        var handedOver: Boolean = false
+    )
     private val displays = mutableMapOf<String, OwnedDisplay>()
     private val requests = LinkedHashMap<String, Boolean>()
     private var lease: String? = null
@@ -121,7 +128,10 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val manager = context.getSystemService(DisplayManager::class.java)
         val display =
             requireNotNull(manager.createVirtualDisplay("Buddy workspace", width, height, dpi, surface, flags))
-        check(display.display.displayId != android.view.Display.DEFAULT_DISPLAY)
+        if (!display.display.isValid || display.display.displayId <= android.view.Display.DEFAULT_DISPLAY) {
+            display.release()
+            error("Owned display unavailable")
+        }
         val token = UUID.randomUUID().toString()
         displays[token] = OwnedDisplay(display, width, height)
         token
@@ -134,10 +144,34 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
 
     @Synchronized override fun launchFixture(value: String, token: String, requestId: String): Int = asShell {
         val display = owned(value, token)
+        check(!display.launchAttempted)
         reserve(requestId)
         // Engineering spike launches only Buddy's controlled fixture; arbitrary app launch is gated later.
-        ShellActivityAdapter.launchFixture(display.display.display.displayId, appUid)
+        display.launchAttempted = true
+        display.fixtureRoot = ShellActivityAdapter.launchFixture(display.display.display.displayId, appUid)
         display.display.display.displayId
+    }
+
+    @Synchronized override fun takeOverFixture(value: String, token: String, requestId: String) = asShell {
+        val display = owned(value, token)
+        reserve(requestId)
+        val source = display.display.display.displayId
+        val root = requireNotNull(display.fixtureRoot)
+        ShellActivityAdapter.moveFixture(root, source, 0, appUid)
+        display.handedOver = true
+    }
+
+    @Synchronized override fun returnFixture(value: String, token: String, requestId: String) = asShell {
+        val display = owned(value, token, allowTakeover = true)
+        check(display.handedOver)
+        reserve(requestId)
+        ShellActivityAdapter.moveFixture(
+            requireNotNull(display.fixtureRoot),
+            0,
+            display.display.display.displayId,
+            appUid
+        )
+        display.handedOver = false
     }
 
     // Hidden input APIs are restricted to this shell-UID process and require device qualification.
@@ -188,11 +222,13 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         check(value == lease && owner?.isBinderAlive == true)
         check(SystemClock.elapsedRealtime() < minOf(leaseDeadline, authorizationDeadline)) { "Authorization expired" }
     }
-    private fun owned(value: String, token: String): OwnedDisplay {
+    private fun owned(value: String, token: String, allowTakeover: Boolean = false): OwnedDisplay {
         validLease(value)
         check(!context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
         check(context.getSystemService(PowerManager::class.java).isInteractive)
-        return requireNotNull(displays[token]).also { check(it.display.display.isValid) }
+        return requireNotNull(displays[token]).also {
+            check(it.display.display.isValid && (allowTakeover || !it.handedOver))
+        }
     }
     private fun reserveChallenge(challenge: ByteArray) {
         require(challenge.size == 32 && usedChallenges.size < 128)

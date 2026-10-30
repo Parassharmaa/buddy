@@ -12,4 +12,6 @@ interface IBuddyHelper {
     void tap(String lease, String displayToken, String requestId, int x, int y);
     void releaseLease(String lease);
     void disconnect();
+    void takeOverFixture(String lease, String displayToken, String requestId);
+    void returnFixture(String lease, String displayToken, String requestId);
 }

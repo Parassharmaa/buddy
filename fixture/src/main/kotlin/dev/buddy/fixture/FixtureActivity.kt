@@ -10,6 +10,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 class FixtureActivity : Activity() {
+    private lateinit var result: TextView
+    private var protectedPage = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val layout = LinearLayout(this).apply {
@@ -28,11 +31,10 @@ class FixtureActivity : Activity() {
         val editor = EditText(this).apply {
             hint = getString(R.string.fixture_draft)
             minHeight = 64
-            id =
-                android.view.View.generateViewId()
+            id = R.id.fixture_draft_input
         }
         layout.addView(editor)
-        val result = text(savedInstanceState?.getString("result") ?: getString(R.string.fixture_empty))
+        result = text(savedInstanceState?.getString("result") ?: getString(R.string.fixture_empty))
         layout.addView(
             Button(this).apply {
                 text = getString(R.string.fixture_send)
@@ -43,20 +45,32 @@ class FixtureActivity : Activity() {
             }
         )
         layout.addView(result)
+        fun showProtectedPage() {
+            if (protectedPage) return
+            protectedPage = true
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            layout.addView(
+                EditText(this).apply {
+                    hint = getString(R.string.fixture_password)
+                    inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    isSaveEnabled = false
+                    importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO
+                }
+            )
+        }
         layout.addView(
             Button(this).apply {
                 text = getString(R.string.fixture_protected)
-                setOnClickListener {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    val password = EditText(this@FixtureActivity).apply {
-                        hint = getString(R.string.fixture_password)
-                        inputType =
-                            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                    }
-                    layout.addView(password)
-                }
+                setOnClickListener { showProtectedPage() }
             }
         )
+        if (savedInstanceState?.getBoolean("protected") == true) showProtectedPage()
         setContentView(layout)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("result", result.text.toString())
+        outState.putBoolean("protected", protectedPage)
+        super.onSaveInstanceState(outState)
     }
 }
