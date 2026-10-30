@@ -1,8 +1,6 @@
 package dev.buddy.connection
 
 import android.content.Context
-import android.os.Binder
-import android.os.SystemClock
 import dev.buddy.adb.AdbIdentity
 import dev.buddy.adb.AdbTransport
 import dev.buddy.adb.BootstrapCommand
@@ -26,7 +24,6 @@ class PhoneConnection(private val context: Context) {
     @Volatile private var transport: AdbTransport? = null
 
     @Volatile private var helper: IBuddyHelper? = null
-    private val owner = Binder()
 
     suspend fun pair(port: Int, code: CharSequence) = withContext(Dispatchers.IO) {
         _status.value = "Pairing with this phone"
