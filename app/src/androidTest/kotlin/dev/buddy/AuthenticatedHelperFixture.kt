@@ -3,6 +3,9 @@ package dev.buddy
 import android.app.UiAutomation
 import android.content.Context
 import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import android.util.Base64
 import dev.buddy.adb.BootstrapCommand
 import dev.buddy.connection.BootstrapProvider
@@ -21,13 +24,40 @@ internal class AuthenticatedHelperFixture private constructor(
         BootstrapProvider.clear()
     }
     companion object {
-        suspend fun start(context: Context, automation: UiAutomation): AuthenticatedHelperFixture {
+        suspend fun start(
+            context: Context,
+            automation: UiAutomation,
+            viaShell: Boolean = false
+        ): AuthenticatedHelperFixture {
             val command = BootstrapCommand.forInstalledApp(context)
             check(command.arguments.none { it.any(Char::isWhitespace) })
             val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
-            val descriptors = automation.executeShellCommandRwe(command.arguments.joinToString(" "))
+            val descriptors = automation.executeShellCommandRwe(
+                if (viaShell) "/system/bin/sh" else command.arguments.joinToString(" ")
+            )
             var connected: IBuddyHelper? = null
             try {
+                if (viaShell) {
+                    // Send the nonce only after the shell has parsed the complete exec line,
+                    // so shell input buffering cannot consume the helper's secret stdin.
+                    val marker = "BUDDY_SHELL_READY\n".toByteArray()
+                    ParcelFileDescriptor.AutoCloseOutputStream(
+                        ParcelFileDescriptor.dup(descriptors[1].fileDescriptor)
+                    ).use {
+                        it.write(("printf 'BUDDY_SHELL_READY\\n'; " + command.value + "\n").toByteArray())
+                        it.flush()
+                    }
+                    val poll = StructPollfd().apply {
+                        fd = descriptors[0].fileDescriptor
+                        events = OsConstants.POLLIN.toShort()
+                    }
+                    check(Os.poll(arrayOf(poll), 5_000) > 0) { "Bootstrap shell unavailable" }
+                    ParcelFileDescriptor.AutoCloseInputStream(
+                        ParcelFileDescriptor.dup(descriptors[0].fileDescriptor)
+                    ).use {
+                        check(it.readNBytes(marker.size).contentEquals(marker)) { "Bootstrap shell failed" }
+                    }
+                }
                 ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1]).use {
                     it.write((Base64.encodeToString(pending.nonce, Base64.NO_WRAP) + "\n").toByteArray())
                 }

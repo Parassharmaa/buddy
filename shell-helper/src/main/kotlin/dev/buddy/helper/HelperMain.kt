@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Looper
 import android.os.Process
+import android.system.Os
+import android.system.OsConstants
 import android.util.Base64
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
@@ -91,6 +93,13 @@ internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
         println("BUDDY_HANDOFF_OK")
         System.out.flush()
         if (helper != null) {
+            stage = "close_bootstrap_streams"
+            val sink = Os.open("/dev/null", OsConstants.O_RDWR, 0)
+            try {
+                for (fd in 0..2) Os.dup2(sink, fd)
+            } finally {
+                Os.close(sink)
+            }
             // A fresh UID-2000 callback establishes the first bounded authorization proof.
             stage = "helper_loop"
             Looper.loop()

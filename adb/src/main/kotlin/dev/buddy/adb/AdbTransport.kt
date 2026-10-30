@@ -146,7 +146,11 @@ class AdbTransport internal constructor(private val identity: AdbIdentity, priva
 }
 
 class BootstrapCommand private constructor(val arguments: List<String>) {
-    val value: String get() = arguments.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
+    // Legacy ADB shell streams use a PTY, whose closure sends SIGHUP. Preserve the
+    // authenticated helper; Binder shutdown, authorization expiry and idle cleanup still apply.
+    val value: String get() = "trap '' HUP; exec " + arguments.joinToString(" ") {
+        "'" + it.replace("'", "'\"'\"'") + "'"
+    }
     companion object {
         fun forInstalledApp(context: android.content.Context, revalidate: Boolean = false): BootstrapCommand {
             val info = context.packageManager.getPackageInfo(
