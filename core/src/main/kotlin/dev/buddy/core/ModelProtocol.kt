@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -52,16 +53,25 @@ class StreamingReply {
     private val json = Json
     fun accept(payload: String) {
         val chunk = json.parseToJsonElement(payload).jsonObject
-        chunk["usage"]?.let { if (it is JsonObject) tokens = it["total_tokens"]?.jsonPrimitive?.intOrNull }
+        (chunk["usage"] as? JsonObject)?.get("total_tokens")?.takeUnless { it == JsonNull }?.let { value ->
+            val count = value.jsonPrimitive.intOrNull
+            require(!value.jsonPrimitive.isString && count != null && count >= 0) { "Invalid token usage" }
+            require(tokens == null || count >= requireNotNull(tokens)) { "Token usage decreased" }
+            tokens = count
+        }
         val choices = chunk["choices"]?.jsonArray ?: return
         if (choices.isEmpty()) return
         require(choices.size == 1) { "Only one completion is supported" }
         val choice = choices.single().jsonObject
         choice["finish_reason"]?.jsonPrimitive?.contentOrNull?.let { reason = it }
         val delta = (choice["delta"] ?: choice["message"])?.jsonObject ?: return
+        delta["role"]?.jsonPrimitive?.contentOrNull?.let { require(it == "assistant") { "Invalid completion role" } }
         delta["content"]?.jsonPrimitive?.contentOrNull?.let { text.append(it) }
         delta["tool_calls"]?.jsonArray?.forEach { entry ->
             val item = entry.jsonObject
+            item["type"]?.let {
+                require(it.jsonPrimitive.contentOrNull == "function") { "Unsupported tool-call type" }
+            }
             val index = item["index"]?.jsonPrimitive?.intOrNull ?: calls.size
             require(index in 0..15)
             val call = calls.getOrPut(index) { Call() }
@@ -75,7 +85,10 @@ class StreamingReply {
     }
     fun finish(): ModelReply {
         val finish =
-            reason ?: throw ModelFailure("truncated", "The provider response ended early. No action was executed.")
+            reason ?: throw ModelFailure(
+                "truncated",
+                "The provider response ended early. No action from this response was executed."
+            )
         if (finish !in
             setOf("stop", "tool_calls")
         ) {

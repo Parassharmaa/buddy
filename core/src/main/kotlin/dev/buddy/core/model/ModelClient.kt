@@ -80,10 +80,16 @@ class ModelClient : java.io.Closeable {
         }
     }
 
-    private fun safeFailure(failure: Exception): ModelFailure = failure as? ModelFailure ?: ModelFailure(
-        "connection",
-        "The model connection failed or returned an invalid response. Check the endpoint and network."
-    )
+    private fun safeFailure(failure: Exception): ModelFailure = when (failure) {
+        is ModelFailure -> failure
+
+        is IOException -> ModelFailure("connection", "The model connection failed. Check the endpoint and network.")
+
+        else -> ModelFailure(
+            "protocol",
+            "The provider returned invalid response data. No action from this response was executed."
+        )
+    }
 
     private fun parse(response: Response): ModelReply {
         when (response.code) {

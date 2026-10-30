@@ -47,4 +47,30 @@ class StreamingReplyTest {
         parser.accept("""{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}""")
         assertThrows(ModelFailure::class.java) { parser.finish() }
     }
+
+    @Test fun unknownToolKindsAndNonAssistantRolesCannotBecomeFunctionCalls() {
+        assertThrows(IllegalArgumentException::class.java) {
+            StreamingReply().accept(
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","type":"custom","function":{"name":"read","arguments":"{}"}}]}}]}"""
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            StreamingReply().accept("""{"choices":[{"message":{"role":"system","content":"untrusted"}}]}""")
+        }
+    }
+
+    @Test fun invalidUsageCannotReduceTheCumulativeBudget() {
+        for (usage in listOf("-1", "1.5", "\"42\"")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                StreamingReply().accept("""{"choices":[],"usage":{"total_tokens":$usage}}""")
+            }
+        }
+        val parser = StreamingReply()
+        parser.accept(
+            """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"total_tokens":100}}"""
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            parser.accept("""{"choices":[],"usage":{"total_tokens":90}}""")
+        }
+    }
 }

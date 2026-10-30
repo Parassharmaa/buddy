@@ -21,6 +21,32 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelClientTest {
+    @Test fun invalidProviderDataIsAProtocolFailureWithoutEchoingPrivateResponseText() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            val body = "not-json-private-provider-fixture".toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            ModelClient().use { client ->
+                val failure = runCatching {
+                    client.complete(
+                        ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "", true),
+                        emptyList()
+                    )
+                }.exceptionOrNull() as ModelFailure
+                assertEquals("protocol", failure.category)
+                assertFalse(failure.message.contains("private-provider-fixture"))
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
     @Test fun realHttpRoundTripUsesConfiguredEndpointAndMatchesToolResult() = runBlocking {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val bodies = mutableListOf<String>()
