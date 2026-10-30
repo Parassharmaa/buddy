@@ -90,7 +90,11 @@ internal class LocalTls(identity: AdbIdentity) {
     @SuppressLint("TrustAllX509TrustManager", "CustomX509TrustManager")
     private class LoopbackAdbTrust : X509TrustManager {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+
+        @SuppressLint("TrustAllX509TrustManager")
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+
+        @SuppressLint("TrustAllX509TrustManager")
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
     }
 }

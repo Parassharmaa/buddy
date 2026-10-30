@@ -16,12 +16,14 @@ class ModelEndpoint private constructor(val uri: URI) {
             }
             require(uri.port == -1 || uri.port in 1..65535)
             val host = uri.host.lowercase().removePrefix("[").removeSuffix("]")
-            val numbers = host.split('.').mapNotNull {
+            val parts = host.split('.')
+            val canonicalIpv4 = parts.size == 4 && parts.all { it.matches(Regex("0|[1-9][0-9]{0,2}")) }
+            val numbers = parts.mapNotNull {
                 it.toIntOrNull()?.takeIf { n -> n in 0..255 }
             }
             val local = host in setOf("localhost", "::1") ||
                 (
-                    numbers.size == 4 && (
+                    canonicalIpv4 && numbers.size == 4 && (
                         numbers[0] == 127 || numbers[0] == 10 ||
                             (numbers[0] == 192 && numbers[1] == 168) ||
                             (numbers[0] == 172 && numbers[1] in 16..31)

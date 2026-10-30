@@ -14,7 +14,7 @@ import java.util.Base64
 import javax.security.auth.x500.X500Principal
 
 class AdbIdentity {
-    private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    private val store by lazy { KeyStore.getInstance("AndroidKeyStore").apply { load(null) } }
 
     @Synchronized
     fun load(): Pair<PrivateKey, X509Certificate> {

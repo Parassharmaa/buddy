@@ -5,7 +5,7 @@ plugins {
 }
 android {
     namespace = "dev.buddy.storage"
-    compileSdkVersion("android-37.2")
+    compileSdk { version = release(37) { minorApiLevel = 2 } }
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33

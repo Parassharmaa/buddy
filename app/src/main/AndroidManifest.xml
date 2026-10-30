@@ -1,1 +1,16 @@
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <queries>
+        <package android:name="dev.buddy.fixture" />
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+    </queries>
+    <!-- HTTP is allowed only for explicitly enabled canonical private IP/localhost model endpoints by ModelEndpoint. ADB always uses TLS. -->
+    <application android:name=".BuddyApplication" android:label="Buddy" android:icon="@drawable/ic_buddy" android:theme="@style/Theme.Buddy" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:usesCleartextTraffic="true" tools:ignore="CleartextTrafficPermitted" android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+        <provider android:name=".connection.BootstrapProvider" android:authorities="${applicationId}.bootstrap" android:exported="true" android:grantUriPermissions="false" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

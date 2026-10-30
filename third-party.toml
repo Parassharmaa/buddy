@@ -1,10 +1,6 @@
-# Vendored dependency provenance; upstream licenses are retained.
-[spake2_android]
-repository = "https://github.com/MuntashirAkon/spake2-java"
-revision = "7615ddd680b990e14513ebb66eac4cb0dbf82464"
-license = "LGPL-3.0-only"
-modifications = ["Idempotent context cleanup", "Current NDK/CMake and 16 KiB ELF alignment"]
-[spake2_c]
-repository = "https://github.com/MuntashirAkon/spake2-c"
-revision = "0d15933e5ba3e662cb01245a7ac0dc9fca3eac31"
-license = "ISC AND BSD-3-Clause AND LGPL-2.1-or-later"
+# Pinned native cryptography; upstream licenses are in the submodule.
+[boringssl]
+repository = "https://github.com/google/boringssl"
+revision = "95f9e9f22f23f429c441c93d476ea52ee05b25e0"
+license = "Apache-2.0 AND ISC AND OpenSSL"
+modifications = []

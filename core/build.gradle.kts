@@ -8,6 +8,7 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 dependencies {
+    implementation(libs.okhttp)
     implementation(libs.coroutines.core)
     implementation(libs.serialization.json)
     testImplementation(libs.junit)

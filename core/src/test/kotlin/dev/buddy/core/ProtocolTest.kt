@@ -58,7 +58,9 @@ class ProtocolTest {
             "https://user:secret@example.com",
             "file:///etc/passwd",
             "https://example.com?key=a",
-            "http://10.evil.com"
+            "http://10.evil.com",
+            "http://127.0.0.1.evil.com",
+            "http://010.0.0.1"
         ).forEach {
             assertThrows(IllegalArgumentException::class.java) { ModelEndpoint.parse(it, true) }
         }

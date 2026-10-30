@@ -33,7 +33,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
     private val death = IBinder.DeathRecipient { synchronized(this) { cleanup() } }
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     init {
-        scheduler.scheduleAtFixedRate({
+        scheduler.scheduleWithFixedDelay({
             synchronized(this) {
                 if (SystemClock.elapsedRealtime() >= minOf(leaseDeadline, authorizationDeadline)) cleanup()
             }
@@ -139,7 +139,10 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         display.display.display.displayId
     }
 
-    @Synchronized override fun tap(value: String, token: String, requestId: String, x: Int, y: Int) = asShell {
+    // Hidden input APIs are restricted to this shell-UID process and require device qualification.
+    @android.annotation.SuppressLint("PrivateApi", "BlockedPrivateApi")
+    @Synchronized
+    override fun tap(value: String, token: String, requestId: String, x: Int, y: Int) = asShell {
         val display = owned(value, token)
         require(x in 0 until display.width && y in 0 until display.height)
         reserve(requestId)
@@ -174,7 +177,9 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         cleanup()
         stopped = true
         scheduler.shutdownNow()
-        android.os.Handler(android.os.Looper.getMainLooper()).post { android.os.Looper.getMainLooper().quitSafely() }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
         Unit
     }
 

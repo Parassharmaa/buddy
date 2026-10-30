@@ -1,0 +1,10 @@
+<resources>
+    <string name="fixture_title">Buddy controlled fixture</string>
+    <string name="fixture_messages">Alice · Project chat\nThe meeting is at 10:30. Bring the prototype.\nBob · I’ll prepare the review.</string>
+    <string name="fixture_draft">Draft a message</string>
+    <string name="fixture_empty">Nothing sent</string>
+    <string name="fixture_send">Send to fixture inbox</string>
+    <string name="fixture_sent">Sent to Alice: %1$s</string>
+    <string name="fixture_protected">Show protected page</string>
+    <string name="fixture_password">Fixture password</string>
+</resources>

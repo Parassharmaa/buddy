@@ -12,10 +12,10 @@ dependencies { add(ktlint.name, libs.ktlint) }
 tasks.register<JavaExec>("formatKotlin") {
     classpath = ktlint
     mainClass.set("com.pinterest.ktlint.Main")
-    args("--format", "**/src/**/*.kt", "**/*.gradle.kts", "!**/build/**", "!pairing-native/**")
+    args("--format", "**/src/**/*.kt", "**/*.gradle.kts", "!**/build/**", "!pairing-native/boringssl/**")
 }
 tasks.register<JavaExec>("lintKotlin") {
     classpath = ktlint
     mainClass.set("com.pinterest.ktlint.Main")
-    args("**/src/**/*.kt", "**/*.gradle.kts", "!**/build/**", "!pairing-native/**")
+    args("**/src/**/*.kt", "**/*.gradle.kts", "!**/build/**", "!pairing-native/boringssl/**")
 }

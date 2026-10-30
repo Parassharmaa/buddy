@@ -17,46 +17,70 @@ import dev.buddy.core.ActionJournal
 import dev.buddy.core.ActionRecord
 import dev.buddy.core.Approval
 import dev.buddy.core.DispatchState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 @Entity(tableName = "records")
 data class EncryptedRecord(@PrimaryKey val id: String, val category: String, val body: ByteArray, val updatedAt: Long)
 
 @Dao
 interface RecordDao {
-    @Query("SELECT * FROM records WHERE id = :id") suspend fun get(id: String): EncryptedRecord?
-    @Query("SELECT * FROM records WHERE category = :category ORDER BY updatedAt DESC") fun observe(category: String): Flow<List<EncryptedRecord>>
-    @Query("SELECT * FROM records WHERE category = :category") suspend fun all(category: String): List<EncryptedRecord>
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun put(record: EncryptedRecord)
-    @Query("DELETE FROM records WHERE id = :id") suspend fun remove(id: String)
-    @Query("DELETE FROM records WHERE category = :category AND updatedAt < :before") suspend fun expire(category: String, before: Long)
-    @Query("DELETE FROM records") suspend fun clear()
+    @Query("SELECT * FROM records WHERE id = :id")
+    suspend fun get(id: String): EncryptedRecord?
+
+    @Query("SELECT * FROM records WHERE category = :category ORDER BY updatedAt DESC")
+    fun observe(category: String): Flow<List<EncryptedRecord>>
+
+    @Query("SELECT * FROM records WHERE category = :category")
+    suspend fun all(category: String): List<EncryptedRecord>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(record: EncryptedRecord)
+
+    @Query("DELETE FROM records WHERE id = :id")
+    suspend fun remove(id: String)
+
+    @Query("DELETE FROM records WHERE category = :category AND updatedAt < :before")
+    suspend fun expire(category: String, before: Long)
+
+    @Query("DELETE FROM records")
+    suspend fun clear()
 }
 
 @Database(entities = [EncryptedRecord::class], version = 1, exportSchema = true)
-abstract class BuddyDatabase : RoomDatabase() { abstract fun records(): RecordDao }
+abstract class BuddyDatabase : RoomDatabase() {
+    abstract fun records(): RecordDao
+}
 
 class EncryptedStore(context: Context) : ActionJournal {
     private val database = Room.databaseBuilder(context, BuddyDatabase::class.java, "buddy.db").build()
     private val dao = database.records()
     private val key: SecretKey by lazy {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey("buddy.records.v1", null) as SecretKey?) ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").run {
-            init(KeyGenParameterSpec.Builder("buddy.records.v1", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
-            generateKey()
-        }
+        (store.getKey("buddy.records.v1", null) as SecretKey?)
+            ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").run {
+                init(
+                    KeyGenParameterSpec.Builder(
+                        "buddy.records.v1",
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                    )
+                        .setBlockModes(
+                            KeyProperties.BLOCK_MODE_GCM
+                        ).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build()
+                )
+                generateKey()
+            }
     }
     private val json = Json { ignoreUnknownKeys = true }
     private fun encrypt(id: String, value: String): ByteArray = Cipher.getInstance("AES/GCM/NoPadding").run {
@@ -74,7 +98,12 @@ class EncryptedStore(context: Context) : ActionJournal {
         dao.put(EncryptedRecord(id, category, encrypt(id, value), System.currentTimeMillis()))
     }
     suspend fun get(id: String): String? = withContext(Dispatchers.IO) { dao.get(id)?.let(::decrypt) }
-    fun observe(category: String): Flow<List<Pair<String, String>>> = dao.observe(category).map { rows -> rows.map { it.id to decrypt(it) } }
+    fun observe(category: String): Flow<List<Pair<String, String>>> = dao.observe(category).map { rows ->
+        rows.map {
+            it.id to
+                decrypt(it)
+        }
+    }.flowOn(Dispatchers.IO)
     suspend fun remove(id: String) = dao.remove(id)
     suspend fun clear() = dao.clear()
     suspend fun expireHistory() {
@@ -94,7 +123,11 @@ class EncryptedStore(context: Context) : ActionJournal {
     }
     override suspend fun update(record: ActionRecord) = database.withTransaction {
         put("action:${record.proposal.id}", "action", json.encodeToString(record))
-        if (record.state == DispatchState.VERIFIED && record.evidenceIds.isNotEmpty()) dao.remove("barrier:${record.proposal.operationKey}")
+        if (record.state == DispatchState.VERIFIED &&
+            record.evidenceIds.isNotEmpty()
+        ) {
+            dao.remove("barrier:${record.proposal.operationKey}")
+        }
     }
     override suspend fun markUncertain(record: ActionRecord) = database.withTransaction {
         put("action:${record.proposal.id}", "action", json.encodeToString(record.copy(state = DispatchState.UNCERTAIN)))

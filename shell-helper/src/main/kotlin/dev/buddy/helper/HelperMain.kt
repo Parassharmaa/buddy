@@ -16,6 +16,9 @@ object RevalidateMain {
     @JvmStatic fun main(args: Array<String>) = bootstrap(args, true)
 }
 
+// app_process runs under UID 2000; this is a version-probed shell adapter, not app-UID reflection.
+@android.annotation.SuppressLint("PrivateApi")
+@Suppress("DEPRECATION")
 internal fun bootstrap(args: Array<String>, revalidate: Boolean) {
     try {
         check(Process.myUid() == ShellProtocol.SHELL_UID)

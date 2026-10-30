@@ -4,8 +4,7 @@ import dev.buddy.core.LoopbackPort
 import dev.buddy.core.ProtocolException
 import dev.buddy.core.normalizedPairingCode
 import dev.buddy.core.readExactly
-import io.github.muntashirakon.crypto.spake2.Spake2Context
-import io.github.muntashirakon.crypto.spake2.Spake2Role
+import dev.buddy.pairing.NativeSpake2
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -23,12 +22,7 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
     fun pair(port: LoopbackPort, rawCode: CharSequence): String {
         val code = normalizedPairingCode(rawCode)
         val tls = LocalTls(identity).connect(port) { socket = it }
-        val native =
-            Spake2Context(
-                Spake2Role.Alice,
-                "adb pair client\u0000".toByteArray(),
-                "adb pair server\u0000".toByteArray()
-            )
+        val native = NativeSpake2()
         var secret = byteArrayOf()
         var key = byteArrayOf()
         var shared = byteArrayOf()
@@ -55,8 +49,8 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
                 }
                 return readExactly(input, size)
             }
-            write(0, native.generateMessage(secret))
-            shared = native.processMessage(read(0, 32))
+            write(0, native.message(secret))
+            shared = native.process(read(0, 32))
             // AOSP HKDF-SHA256, empty salt, 16-byte AES key, fixed protocol label.
             val mac = Mac.getInstance("HmacSHA256")
             mac.init(SecretKeySpec(ByteArray(32), "HmacSHA256"))
@@ -94,7 +88,7 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
             key.fill(0)
             shared.fill(0)
             exported.fill(0)
-            native.destroy()
+            native.close()
             close()
         }
     }

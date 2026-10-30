@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "dev.buddy.designsystem"
-    compileSdkVersion("android-37.2")
+    compileSdk { version = release(37) { minorApiLevel = 2 } }
     buildToolsVersion = "37.0.0"
     defaultConfig {
         minSdk = 33
@@ -20,6 +20,7 @@ android {
     buildFeatures { compose = true }
 }
 dependencies {
+    constraints { implementation(libs.lifecycle.runtime) }
     testImplementation(libs.junit)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
