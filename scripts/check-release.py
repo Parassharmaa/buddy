@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import subprocess
+import struct
 import tempfile
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
@@ -53,6 +54,26 @@ with ZipFile(app) as archive:
     for abi in abis:
         if not {f"lib/{abi}/libbuddy_pairing.so", f"lib/{abi}/libconscrypt_jni.so"} <= libraries:
             raise SystemExit(f"Optimized APK has an incomplete pairing/TLS stack for {abi}")
+    for name in sorted(libraries):
+        elf = archive.read(name)
+        if elf[:6] != b"\x7fELF\x02\x01":
+            raise SystemExit(f"Expected a 64-bit little-endian native library: {name}")
+        offset = struct.unpack_from("<Q", elf, 32)[0]
+        entry_size, count = struct.unpack_from("<HH", elf, 54)
+        if entry_size < 56 or offset + entry_size * count > len(elf):
+            raise SystemExit(f"Invalid ELF program header: {name}")
+        loads = 0
+        for index in range(count):
+            header = offset + index * entry_size
+            if struct.unpack_from("<I", elf, header)[0] != 1:  # PT_LOAD
+                continue
+            loads += 1
+            file_offset, address = struct.unpack_from("<QQ", elf, header + 8)
+            alignment = struct.unpack_from("<Q", elf, header + 48)[0]
+            if alignment < 16384 or file_offset % 16384 != address % 16384:
+                raise SystemExit(f"Native library does not support 16 KB pages: {name}")
+        if not loads:
+            raise SystemExit(f"Native library has no loadable segments: {name}")
     if archive.read("assets/licenses/boringssl.txt") != Path("pairing-native/boringssl/LICENSE").read_bytes():
         raise SystemExit("Packaged native license differs from the pinned source")
-print("Optimized shell entry points, JNI bindings, native license and 16 KB APK alignment verified")
+print("Optimized entry points, JNI, license and 16 KB native/APK alignment verified")
