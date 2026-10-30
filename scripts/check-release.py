@@ -21,6 +21,7 @@ expected = {
     "dev.buddy.pairing.NativeSpake2", "dev.buddy.HistoryRetentionWorker",
 }
 found = set()
+window_listener_found = False
 with tempfile.TemporaryFile() as output:
     subprocess.run([str(tools / "dexdump"), "-l", "xml", str(app)], stdout=output, check=True)
     output.seek(0)
@@ -33,6 +34,14 @@ with tempfile.TemporaryFile() as output:
         name = package + "." + element.get("name", "")
         if name.startswith("android.window.WindowInfosListener") or name == "android.view.InputWindowHandle":
             raise SystemExit("Compile-only Android platform declarations were packaged in the APK")
+        if element.get("extends") == "android.window.WindowInfosListener":
+            window_listener_found |= any(
+                method.get("name") == "onWindowInfosChanged" and method.get("return") == "void"
+                and method.get("visibility") == "public"
+                and [parameter.get("type") for parameter in method.findall("parameter")]
+                == ["android.view.InputWindowHandle[]", "android.window.WindowInfosListener$DisplayInfo[]"]
+                for method in element.findall("method")
+            )
         if name in expected:
             methods = element.findall("method")
             if name.endswith("Main"):
@@ -58,6 +67,8 @@ with tempfile.TemporaryFile() as output:
         element.clear()
 if found != expected:
     raise SystemExit(f"Optimized APK lost required classes: {sorted(expected - found)}")
+if not window_listener_found:
+    raise SystemExit("Optimized APK lost the platform window-metadata callback contract")
 with ZipFile(app) as archive:
     libraries = {name for name in archive.namelist() if name.startswith("lib/") and name.endswith(".so")}
     abis = {name.split("/")[1] for name in libraries}
