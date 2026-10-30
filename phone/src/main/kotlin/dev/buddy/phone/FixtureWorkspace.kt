@@ -3,6 +3,7 @@ package dev.buddy.phone
 import android.app.KeyguardManager
 import android.content.Context
 import android.os.Binder
+import android.os.Bundle
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
@@ -29,7 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal enum class FixtureActionKind { DRAFT, SEND, PROTECTED_PAGE }
+internal enum class FixtureActionKind { DRAFT, SEND, PROTECTED_PAGE, CREDENTIAL_PAGE, SECURE_PAGE }
 
 class PreparedFixtureAction internal constructor(
     internal val owner: FixtureWorkspace,
@@ -66,17 +67,24 @@ class FixtureWorkspace private constructor(
     private fun ownedFingerprint(nodes: List<UiElement>): String =
         sha256("$session:${scope.displayId}:$generation:" + fixtureFingerprint(nodes))
 
-    private fun validateDisplay() {
+    private fun validateDisplay(): Bundle {
         check(!closed.get() && !handedOver && owner.isBinderAlive && SystemClock.elapsedRealtime() < deadline)
         val state = helper.displayState(lease, token)
         check(state.getInt("displayId") == scope.displayId)
         check(state.getInt("width") == scope.width && state.getInt("height") == scope.height)
+        return state
     }
 
     private fun snapshot(): FixtureSnapshot {
         val startedGeneration = generation
-        validateDisplay()
-        val captured = FixtureScreenService.capture(scope)
+        val state = validateDisplay()
+        val privacy = FixtureWindowPrivacy(
+            state.getBoolean("windowMetadataKnown"),
+            state.getBoolean("secureWindow"),
+            state.getBoolean("mixedWindowOwners"),
+            state.getInt("windowMetadataStatus", -1)
+        )
+        val captured = FixtureScreenService.capture(scope, privacy)
         check(startedGeneration == generation && !handedOver && !closed.get())
         val bound = captured.copy(
             observation = captured.observation.copy(
@@ -165,17 +173,18 @@ class FixtureWorkspace private constructor(
         )
     }
 
-    fun prepareProtectedPage(observation: Observation): PreparedFixtureAction {
-        val button = observation.nodes.single { it.label.equals("Show protected page", ignoreCase = true) }
-        return prepare(
-            FixtureActionKind.PROTECTED_PAGE,
-            observation,
-            button,
-            "",
-            Effect.NAVIGATE,
-            button.id,
-            "fixture protected page"
-        )
+    fun prepareProtectedPage(observation: Observation): PreparedFixtureAction =
+        preparePage(observation, "Show protected page", FixtureActionKind.PROTECTED_PAGE)
+
+    fun prepareCredentialPage(observation: Observation): PreparedFixtureAction =
+        preparePage(observation, "Show credential page", FixtureActionKind.CREDENTIAL_PAGE)
+
+    fun prepareSecurePage(observation: Observation): PreparedFixtureAction =
+        preparePage(observation, "Show secure page", FixtureActionKind.SECURE_PAGE)
+
+    private fun preparePage(observation: Observation, label: String, kind: FixtureActionKind): PreparedFixtureAction {
+        val button = observation.nodes.single { it.label.equals(label, ignoreCase = true) }
+        return prepare(kind, observation, button, "", Effect.NAVIGATE, button.id, "fixture private page")
     }
 
     suspend fun execute(
@@ -196,8 +205,9 @@ class FixtureWorkspace private constructor(
                     val requested = gate()
                     val keyguard = context.getSystemService(KeyguardManager::class.java)
                     val owns = runCatching {
-                        validateDisplay()
-                        true
+                        val state = validateDisplay()
+                        state.getBoolean("windowMetadataKnown") && !state.getBoolean("secureWindow") &&
+                            !state.getBoolean("mixedWindowOwners")
                     }.getOrDefault(false)
                     requested.copy(
                         ownsApp = requested.ownsApp && owns,
@@ -212,7 +222,10 @@ class FixtureWorkspace private constructor(
                 dispatch = {
                     val fresh = snapshot()
                     check(fresh.observation.fingerprint == prepared.observation.fingerprint)
-                    check(!fresh.observation.credentialSurface && !fresh.observation.excludedOverlay)
+                    check(
+                        !fresh.observation.protected && !fresh.observation.credentialSurface &&
+                            !fresh.observation.excludedOverlay
+                    )
                     val node = requireNotNull(fresh.nodes[prepared.nodeId])
                     check(node.isVisibleToUser)
                     currentCoroutineContext().ensureActive()
@@ -223,7 +236,8 @@ class FixtureWorkspace private constructor(
                             prepared.proposal.payload
                         )
 
-                        FixtureActionKind.SEND, FixtureActionKind.PROTECTED_PAGE -> {
+                        FixtureActionKind.SEND, FixtureActionKind.PROTECTED_PAGE,
+                        FixtureActionKind.CREDENTIAL_PAGE, FixtureActionKind.SECURE_PAGE -> {
                             val bounds = android.graphics.Rect().also(node::getBoundsInScreen)
                             helper.tap(
                                 lease,
@@ -256,7 +270,12 @@ class FixtureWorkspace private constructor(
                                     "Sent to Alice: ${prepared.proposal.payload}"
                             }
 
-                            FixtureActionKind.PROTECTED_PAGE -> after.credentialSurface && after.nodes.isEmpty()
+                            FixtureActionKind.PROTECTED_PAGE ->
+                                (after.protected || after.credentialSurface) && after.nodes.isEmpty()
+
+                            FixtureActionKind.CREDENTIAL_PAGE -> after.credentialSurface && after.nodes.isEmpty()
+
+                            FixtureActionKind.SECURE_PAGE -> after.protected && after.nodes.isEmpty()
                         }
                         if (verified) {
                             // Persist the filtered observation before the journal can mark this action verified.
@@ -264,7 +283,7 @@ class FixtureWorkspace private constructor(
                             evidence = listOf(after.id)
                             break
                         }
-                        if (after.credentialSurface || after.excludedOverlay) break
+                        if (after.protected || after.credentialSurface || after.excludedOverlay) break
                         delay(50)
                     }
                     evidence

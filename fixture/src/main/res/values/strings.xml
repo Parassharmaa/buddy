@@ -7,4 +7,6 @@
     <string name="fixture_sent">Sent to Alice: %1$s</string>
     <string name="fixture_protected">Show protected page</string>
     <string name="fixture_password">Fixture password</string>
+    <string name="fixture_credential">Show credential page</string>
+    <string name="fixture_secure">Show secure page</string>
 </resources>

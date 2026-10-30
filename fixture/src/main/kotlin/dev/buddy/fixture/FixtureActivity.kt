@@ -12,6 +12,7 @@ import android.widget.TextView
 class FixtureActivity : Activity() {
     private lateinit var result: TextView
     private var protectedPage = false
+    private var securePage = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,10 +50,14 @@ class FixtureActivity : Activity() {
             }
         )
         layout.addView(result)
-        fun showProtectedPage() {
+        fun showSecurePage() {
+            securePage = true
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        fun showProtectedPage(secure: Boolean = true) {
+            if (secure) showSecurePage()
             if (protectedPage) return
             protectedPage = true
-            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             layout.addView(
                 EditText(this).apply {
                     id = R.id.fixture_password_input
@@ -70,7 +75,22 @@ class FixtureActivity : Activity() {
                 setOnClickListener { showProtectedPage() }
             }
         )
-        if (savedInstanceState?.getBoolean("protected") == true) showProtectedPage()
+        layout.addView(
+            Button(this).apply {
+                id = R.id.fixture_credential_button
+                text = getString(R.string.fixture_credential)
+                setOnClickListener { showProtectedPage(secure = false) }
+            }
+        )
+        layout.addView(
+            Button(this).apply {
+                id = R.id.fixture_secure_button
+                text = getString(R.string.fixture_secure)
+                setOnClickListener { showSecurePage() }
+            }
+        )
+        if (savedInstanceState?.getBoolean("protected") == true) showProtectedPage(secure = false)
+        if (savedInstanceState?.getBoolean("secure") == true) showSecurePage()
         setContentView(layout)
         layout.requestFocus()
     }
@@ -78,6 +98,7 @@ class FixtureActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("result", result.text.toString())
         outState.putBoolean("protected", protectedPage)
+        outState.putBoolean("secure", securePage)
         super.onSaveInstanceState(outState)
     }
 }

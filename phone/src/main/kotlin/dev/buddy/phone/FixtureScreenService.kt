@@ -30,6 +30,8 @@ internal data class FixtureDisplayScope(val displayId: Int, val width: Int, val 
     }
 }
 
+internal data class FixtureWindowPrivacy(val known: Boolean, val secure: Boolean, val mixed: Boolean, val status: Int)
+
 internal data class FixtureSnapshot(val observation: Observation, val nodes: Map<String, AccessibilityNodeInfo>)
 
 internal fun fixtureFingerprint(nodes: List<UiElement>): String = sha256(
@@ -77,9 +79,22 @@ class FixtureScreenService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun snapshot(scope: FixtureDisplayScope): FixtureSnapshot {
+    private fun snapshot(scope: FixtureDisplayScope, privacy: FixtureWindowPrivacy): FixtureSnapshot {
         check(getSystemService(DisplayManager::class.java).getDisplay(scope.displayId)?.isValid == true)
         val startRevision = revision.get()
+        if (!privacy.known || privacy.secure || privacy.mixed) {
+            lastWindowSummary =
+                "metadata suppressed; status=${privacy.status}; known=${privacy.known}; " +
+                "secure=${privacy.secure}; mixed=${privacy.mixed}"
+            return FixtureSnapshot(
+                Observation(
+                    UUID.randomUUID().toString(), scope.runId, startRevision, SystemClock.elapsedRealtime(),
+                    FIXTURE_PACKAGE, scope.width, scope.height, emptyList(), fixtureFingerprint(emptyList()),
+                    protected = privacy.secure, excludedOverlay = !privacy.known || privacy.mixed
+                ),
+                emptyMap()
+            )
+        }
         val windows = windowsOnAllDisplays.get(scope.displayId).orEmpty()
         lastWindowSummary = "count=${windows.size}; types=${windows.map { it.type }.sorted()}; " +
             "roots=${windows.count { it.root != null }}"
@@ -152,8 +167,8 @@ class FixtureScreenService : AccessibilityService() {
             private set
         val connected: Boolean get() = current != null
 
-        internal fun capture(scope: FixtureDisplayScope): FixtureSnapshot =
-            requireNotNull(current) { "Enable fixture screen access first" }.snapshot(scope)
+        internal fun capture(scope: FixtureDisplayScope, privacy: FixtureWindowPrivacy): FixtureSnapshot =
+            requireNotNull(current) { "Enable fixture screen access first" }.snapshot(scope, privacy)
 
         internal fun edit(snapshot: FixtureSnapshot, nodeId: String, value: String) {
             val node = requireNotNull(snapshot.nodes[nodeId])

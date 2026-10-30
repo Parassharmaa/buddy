@@ -32,6 +32,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class FixtureWorkspaceDeviceTest {
     @Test fun appObservationApprovalAndPrivacyUseTheOwnedFixtureWorkspace() = runBlocking {
+        verifyWorkspace(secureOnly = false)
+    }
+
+    @Test fun secureWindowWithoutAPasswordSuppressesTheOwnedTree() = runBlocking {
+        verifyWorkspace(secureOnly = true)
+    }
+    private suspend fun verifyWorkspace(secureOnly: Boolean) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -148,11 +155,20 @@ class FixtureWorkspaceDeviceTest {
                                 workspace.execute(workspace.prepareSend(returned), approval, gate = { gate() })
                             )
                             stage = "suppress_protected_tree"
-                            val protectedPage = workspace.prepareProtectedPage(returned)
+                            val protectedPage = if (secureOnly) {
+                                workspace.prepareSecurePage(returned)
+                            } else {
+                                workspace.prepareCredentialPage(returned)
+                            }
                             val protectedResult = workspace.execute(protectedPage, gate = { gate() })
                             assertTrue("Protected page: $protectedResult", protectedResult is ExecutionResult.Verified)
                             val suppressed = workspace.observe()
-                            assertTrue(suppressed.credentialSurface && suppressed.nodes.isEmpty())
+                            assertTrue(suppressed.nodes.isEmpty())
+                            if (secureOnly) {
+                                assertTrue(suppressed.protected && !suppressed.credentialSurface)
+                            } else {
+                                assertTrue(suppressed.credentialSurface && !suppressed.protected)
+                            }
                             assertTrue(runCatching { workspace.prepareDraft(suppressed, "blocked") }.isFailure)
                         } finally {
                             workspace.close()

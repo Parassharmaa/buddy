@@ -110,6 +110,12 @@ class HelperDeviceTest {
             node { it.text?.toString() == "Sent to Alice: $text" }
             stage = "verify_frames"
             withTimeout(5_000) { while (frames.count == 0) delay(50) }
+            stage = "verify_window_privacy_metadata"
+            val privacy = connected.displayState(lease, token)
+            check(privacy.getBoolean("windowMetadataKnown")) {
+                "Window metadata unavailable (status=${privacy.getInt("windowMetadataStatus", -1)})"
+            }
+            check(!privacy.getBoolean("secureWindow") && !privacy.getBoolean("mixedWindowOwners"))
             stage = "takeover"
             connected.takeOverFixture(lease, token, UUID.randomUUID().toString())
             node(0) { it.text?.toString() == "Sent to Alice: $text" }
