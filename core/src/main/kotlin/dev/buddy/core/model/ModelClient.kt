@@ -36,7 +36,8 @@ class ModelClient : java.io.Closeable {
         .callTimeout(90, TimeUnit.SECONDS)
         .build()
     private val json = Json {
-        encodeDefaults = false
+        // ToolCall.type defaults to "function" but is mandatory in provider requests.
+        encodeDefaults = true
         explicitNulls = false
     }
 

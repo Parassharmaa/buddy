@@ -12,6 +12,10 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -41,6 +45,12 @@ class ModelClientTest {
                     ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "synthetic-fixture-key", true)
                 assertEquals("Tool calling and response verified", client.probe(config))
                 assertTrue(bodies.last().contains("\"tool_call_id\":\"probe-1\""))
+                val messages = Json.parseToJsonElement(bodies.last()).jsonObject.getValue("messages").jsonArray
+                val assistant = messages.first {
+                    it.jsonObject["role"]?.jsonPrimitive?.content == "assistant"
+                }.jsonObject
+                val call = assistant.getValue("tool_calls").jsonArray.single().jsonObject
+                assertEquals("function", call.getValue("type").jsonPrimitive.content)
                 assertFalse(config.toString().contains("synthetic-fixture-key"))
             }
         } finally {
