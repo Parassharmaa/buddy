@@ -19,8 +19,10 @@ import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import dev.buddy.adb.AdbIdentity
+import dev.buddy.adb.AdbServiceKind
 import dev.buddy.adb.AdbTransport
 import dev.buddy.adb.BootstrapCommand
+import dev.buddy.adb.LocalAdbDiscovery
 import dev.buddy.adb.PairingClient
 import dev.buddy.connection.BootstrapProvider
 import dev.buddy.connection.DaemonAuthorization
@@ -119,6 +121,10 @@ class LocalPairingDeviceTest {
         var portProbeStatus = "not_attempted"
         var pairingCodeSeen = false
         var pairingPortSeen = false
+        var pairingDiscoveryAttempted = false
+        var pairingDiscoveryCount = 0
+        var pairingDialogFailed = false
+        var pairingCodeCurrent = false
         var pairingAddressShape = "NOT_SEEN"
         var pairingDialogSeen = false
         fun nodes(): List<AccessibilityNodeInfo> {
@@ -300,6 +306,7 @@ class LocalPairingDeviceTest {
                 }
             }
             enter(Stage.READ_PAIRING_DIALOG)
+            val pairingDetailsStartedAt = SystemClock.elapsedRealtime()
             val pairingPort = withTimeout(10_000) {
                 while (true) {
                     if (allowNetwork()) {
@@ -307,6 +314,10 @@ class LocalPairingDeviceTest {
                         continue
                     }
                     val controls = nodes()
+                    pairingDialogFailed = controls.any {
+                        it.viewIdResourceName == "com.android.settings:id/pairing_failed_label" && it.isVisibleToUser
+                    }
+                    check(!pairingDialogFailed) { "Android could not start its pairing service" }
                     val text = controls.mapNotNull { it.text?.toString() }
                     val codeField = controls.firstOrNull {
                         it.viewIdResourceName == "com.android.settings:id/pairing_code" && it.isVisibleToUser
@@ -327,6 +338,7 @@ class LocalPairingDeviceTest {
                         else -> "UNRECOGNIZED"
                     }
                     val port = address?.let(::portIn)
+                    pairingCodeCurrent = pairingCode != null
                     pairingCodeSeen = pairingCodeSeen || pairingCode != null
                     pairingPortSeen = pairingPortSeen || port != null
                     val dialogVisible = codeField != null || addressField != null
@@ -340,6 +352,21 @@ class LocalPairingDeviceTest {
                     if (pairingCode != null && port != null) {
                         code = pairingCode.toCharArray()
                         return@withTimeout port
+                    }
+                    if (pairingCode != null && port == null && !pairingDiscoveryAttempted &&
+                        SystemClock.elapsedRealtime() - pairingDetailsStartedAt >= 1_000
+                    ) {
+                        pairingDiscoveryAttempted = true
+                        val found = LocalAdbDiscovery(context).find(AdbServiceKind.PAIRING)
+                        pairingDiscoveryCount = found.size
+                        // The dialog and code must still be current after the asynchronous lookup.
+                        val currentCode = nodes().firstOrNull {
+                            it.viewIdResourceName == "com.android.settings:id/pairing_code" && it.isVisibleToUser
+                        }?.text?.toString()
+                        if (found.size == 1 && currentCode == pairingCode) {
+                            code = pairingCode.toCharArray()
+                            return@withTimeout found.single().value
+                        }
                     }
                     delay(100)
                 }
@@ -536,7 +563,9 @@ class LocalPairingDeviceTest {
                     "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen; " +
                     "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts; portProbe=$portProbeStatus; " +
                     "pairCodeSeen=$pairingCodeSeen; pairPortSeen=$pairingPortSeen; " +
-                    "pairDialogSeen=$pairingDialogSeen; pairAddressShape=$pairingAddressShape",
+                    "pairDialogSeen=$pairingDialogSeen; pairAddressShape=$pairingAddressShape; " +
+                    "pairCodeCurrent=$pairingCodeCurrent; pairDialogFailed=$pairingDialogFailed; " +
+                    "pairDiscoveryAttempted=$pairingDiscoveryAttempted; pairDiscoveryCount=$pairingDiscoveryCount",
                 failure
             )
         } finally {
