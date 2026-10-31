@@ -444,30 +444,32 @@ class BrowserDeviceTest {
                         assertTrue("Upload fixture has no input focus", view.hasWindowFocus())
                     }
                     InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                    // Fresh bounds from our fixed fixture produce a real user gesture, not an input replay.
-                    val encoded = script(
-                        view,
-                        "(function(){const r=document.getElementById('pick').getBoundingClientRect();" +
-                            "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,visualViewport.width]);})()"
+                    val device = androidx.test.uiautomator.UiDevice.getInstance(
+                        InstrumentationRegistry.getInstrumentation()
                     )
-                    val bounds = Json.parseToJsonElement(
-                        Json.parseToJsonElement(encoded).jsonPrimitive.content
-                    ).jsonArray
-                    val point = withContext(Dispatchers.Main) {
-                        assertEquals(android.view.Display.DEFAULT_DISPLAY, view.display.displayId)
+                    val button = requireNotNull(
+                        device.wait(
+                            androidx.test.uiautomator.Until.findObject(
+                                androidx.test.uiautomator.By.text("Choose synthetic file")
+                            ),
+                            2_000
+                        )
+                    ) { "Upload fixture button is absent from the current window" }
+                    assertEquals(activity.packageName, button.applicationPackage)
+                    val bounds = button.visibleBounds
+                    withContext(Dispatchers.Main) {
                         val position = IntArray(2).also(view::getLocationOnScreen)
-                        val scale = view.width / bounds[2].jsonPrimitive.double
-                        val x = position[0] + (bounds[0].jsonPrimitive.double * scale).toInt()
-                        val y = position[1] + (bounds[1].jsonPrimitive.double * scale).toInt()
-                        assertTrue(x in position[0] until position[0] + view.width)
-                        assertTrue(y in position[1] until position[1] + view.height)
-                        x to y
+                        assertTrue(bounds.width() > 0 && bounds.height() > 0)
+                        assertTrue(
+                            android.graphics.Rect(
+                                position[0],
+                                position[1],
+                                position[0] + view.width,
+                                position[1] + view.height
+                            ).contains(bounds.centerX(), bounds.centerY())
+                        )
                     }
-                    assertTrue(
-                        androidx.test.uiautomator.UiDevice.getInstance(
-                            InstrumentationRegistry.getInstrumentation()
-                        ).click(point.first, point.second)
-                    )
+                    button.click()
                     expectedClicks++
                     try {
                         withTimeout(2_000) {
