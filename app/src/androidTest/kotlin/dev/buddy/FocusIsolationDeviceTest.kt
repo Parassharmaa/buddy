@@ -112,7 +112,10 @@ class FocusIsolationDeviceTest {
                         virtualIgnoresCaseMatch = actual?.equals(message, ignoreCase = true) == true
                         virtualMismatchPositions = message.indices.filter { actual?.getOrNull(it) != message[it] }
                         ui.node(display) { it.isEditable && it.text?.toString() == message }
-                        val send = ui.node(display) { it.text?.toString() == "Send to fixture inbox" }
+                        stage = "observe_virtual_send_button"
+                        val send = ui.node(display) {
+                            it.text?.toString()?.equals("Send to fixture inbox", ignoreCase = true) == true
+                        }
                         val bounds = Rect().also(send::getBoundsInScreen)
                         stage = "concurrent_keyboard_and_virtual_send"
                         coroutineScope {
