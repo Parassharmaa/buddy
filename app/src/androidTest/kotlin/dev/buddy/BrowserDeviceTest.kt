@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.browser.BrowserDownloader
 import dev.buddy.browser.PrivateWebHost
 import dev.buddy.browser.WebAddress
+import dev.buddy.browser.WebInterruption
 import dev.buddy.browser.WebReadResult
 import dev.buddy.browser.WebReadStatus
 import dev.buddy.browser.WebStatus
@@ -56,6 +57,9 @@ class BrowserDeviceTest {
                                 }
                             }
                             val content = when (path.substringBefore('?')) {
+                                "/captcha" ->
+                                    "<div class='one\tg-recaptcha\ntwo' style='width:100px;height:40px'>Synthetic challenge</div>"
+
                                 "/private" ->
                                     "<p>Never collect this body</p>" +
                                         "<input type='password' value='synthetic secret'>"
@@ -81,10 +85,16 @@ class BrowserDeviceTest {
                                         content + "</body></html>"
                                     ).toByteArray()
                             }
+                            val status = when (path.substringBefore('?')) {
+                                "/denied" -> "403 Forbidden"
+                                "/limited" -> "429 Too Many Requests"
+                                "/sign-in" -> "401 Unauthorized"
+                                else -> "200 OK"
+                            }
                             client.getOutputStream().apply {
                                 write(
                                     (
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 $status\r\n" +
                                             (
                                                 if (document) {
                                                     "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=fixture.pdf\r\n"
@@ -157,6 +167,60 @@ class BrowserDeviceTest {
             activity.session.state.value.canRead
         )
         return activity.session.observe(pages.origin)
+    }
+
+    @Test(timeout = 60_000)
+    fun accessDenialRateLimitsAndVerificationStopReadsUntilFreshUserHandling() = runBlocking {
+        withBrowser { activity, pages ->
+            for ((path, reason) in listOf(
+                "/denied" to WebInterruption.ACCESS_DENIED,
+                "/limited" to WebInterruption.RATE_LIMIT,
+                "/sign-in" to WebInterruption.SIGN_IN
+            )) {
+                withContext(Dispatchers.Main) { activity.session.navigate(WebAddress.parse(pages.origin + path)) }
+                withTimeout(10_000) {
+                    activity.session.state.first { it.status == WebStatus.HUMAN_REQUIRED && it.interruption == reason }
+                }
+                assertEquals(
+                    WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED),
+                    activity.session.observe(pages.origin)
+                )
+                assertFalse(activity.session.state.value.hasUploadRequest)
+                assertEquals(null, activity.session.state.value.download)
+            }
+            withContext(Dispatchers.Main) {
+                activity.session.navigate(WebAddress.parse(pages.origin + "/captcha"))
+                val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                val view = root.getChildAt(0) as android.webkit.WebView
+                // A previous document can finish after loadUrl and before the new document starts.
+                view.webViewClient.onPageFinished(view, view.url.orEmpty())
+                assertEquals(WebStatus.LOADING, activity.session.state.value.status)
+            }
+            withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
+            val challenge = activity.session.observe(pages.origin)
+            assertEquals(
+                "CAPTCHA_READ status=${activity.session.state.value.status} " +
+                    "interruption=${activity.session.state.value.interruption} canRead=${activity.session.state.value.canRead}",
+                WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED),
+                challenge
+            )
+            assertEquals(WebInterruption.VERIFICATION, activity.session.state.value.interruption)
+            assertEquals(
+                WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED),
+                activity.session.observe(pages.origin)
+            )
+            withContext(Dispatchers.Main) {
+                val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                val view = root.getChildAt(0) as android.webkit.WebView
+                val result = kotlinx.coroutines.CompletableDeferred<Unit>()
+                view.evaluateJavascript("document.querySelector('.g-recaptcha').remove()") { result.complete(Unit) }
+                withTimeout(2_000) { result.await() }
+            }
+            assertTrue(activity.session.observe(pages.origin) is WebReadResult.Allowed)
+            assertEquals(null, activity.session.state.value.interruption)
+            assertEquals(WebStatus.READY, activity.session.state.value.status)
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+        }
     }
 
     @Test(timeout = 60_000)
