@@ -79,7 +79,9 @@ class BuddyViewModel(
     private val persistence = Mutex()
     private val files = FileWorkspaceController(store, documents, viewModelScope, _state, persistence)
     internal val browser = BrowserController(browserContext, viewModelScope)
-    internal val sources = SourceController(store, viewModelScope, _state, { config }, browser::source)
+    private val pdf = browserContext?.let { dev.buddy.pdf.PdfSourceReader(it, store) }
+    internal val sources =
+        SourceController(store, viewModelScope, _state, { config }, browser::source, pdf?.let { it::read })
     internal val memory = MemoryController(store.memories, _state, viewModelScope)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -433,7 +435,7 @@ class BuddyViewModel(
     }
     fun deleteAll() {
         if (!_state.value.loaded) return
-        sources.cancel(clearDraft = true)
+        val pendingSource = sources.cancel(clearDraft = true)
         val pendingFiles = files.cancel()
         val pendingMemory = memory.cancel()
         val pendingModel = stopModel(persistRecord = false)
@@ -449,6 +451,7 @@ class BuddyViewModel(
         }
         viewModelScope.launch {
             pendingModel?.join()
+            pendingSource?.join()
             pendingFiles?.join()
             pendingMemory?.join()
             pendingLoad?.join()

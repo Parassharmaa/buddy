@@ -26,7 +26,10 @@ android {
         abortOnError = true
         warningsAsErrors = true
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        aidl = true
+    }
     buildTypes {
         release {
             isMinifyEnabled = true

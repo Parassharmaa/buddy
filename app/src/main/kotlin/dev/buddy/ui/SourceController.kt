@@ -32,7 +32,8 @@ internal class SourceController(
     private val scope: CoroutineScope,
     private val buddy: MutableStateFlow<BuddyState>,
     private val config: () -> ModelConfig?,
-    private val readPage: suspend () -> WebReadResult
+    private val readPage: suspend () -> WebReadResult,
+    private val readPdf: (suspend (String, String) -> dev.buddy.pdf.PdfExcerpt)? = null
 ) {
     private val _state = MutableStateFlow(SourcePanelState())
     val state = _state.asStateFlow()
@@ -78,6 +79,18 @@ internal class SourceController(
     fun file(id: String) {
         val workspace = buddy.value.conversation.id
         val file = buddy.value.artifacts.firstOrNull { it.id == id } ?: return
+        if (file.mimeType == "application/pdf") {
+            val reader = readPdf
+            if (reader == null || android.os.Build.VERSION.SDK_INT < 35) {
+                error("PDF text previews require Android 15 or later. You can still open or share the file.")
+                return
+            }
+            prepare { selected ->
+                val excerpt = reader(workspace, id)
+                source(id, ChatSourceKind.FILE, file.displayName, excerpt.text, excerpt.truncated, selected)
+            }
+            return
+        }
         if (file.mimeType !in setOf("text/plain", "text/markdown", "application/json")) {
             error("Only text documents can be sent as model context in this build.")
             return
@@ -168,11 +181,13 @@ internal class SourceController(
         buddy.update { it.copy(draftSources = it.draftSources.filterNot { source -> source.id == id }) }
         if (_state.value.preparing || _state.value.pending?.source?.id == id) cancel()
     }
-    fun cancel(clearDraft: Boolean = false) {
+    fun cancel(clearDraft: Boolean = false): Job? {
         epoch++
-        job?.cancel()
+        val pending = job
+        pending?.cancel()
         job = null
         _state.value = SourcePanelState()
         if (clearDraft) buddy.update { it.copy(draftSources = emptyList()) }
+        return pending
     }
 }
