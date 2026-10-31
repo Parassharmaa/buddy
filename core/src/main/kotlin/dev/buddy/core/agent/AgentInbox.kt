@@ -9,6 +9,8 @@ class AgentInbox {
     private val pending = ArrayDeque<String>()
     private val signal = Channel<Unit>(Channel.CONFLATED)
     private var open = true
+    private var pause = false
+    internal val pauseRequested: Boolean get() = synchronized(lock) { pause }
     internal val updates: ReceiveChannel<Unit> get() = signal
 
     fun offer(text: String): Boolean {
@@ -21,19 +23,26 @@ class AgentInbox {
         }
     }
 
+    fun requestPause(): Boolean = synchronized(lock) {
+        if (!open || pause) return@synchronized false
+        pause = true
+        signal.trySend(Unit)
+        true
+    }
+
     internal fun drain(): List<String> = synchronized(lock) {
         pending.toList().also {
             pending.clear()
             while (signal.tryReceive().isSuccess) {
-                // A drain consumes every queued wake-up together with the corresponding input.
+                // Input is drained here; a pause request stays latched until the run closes.
             }
         }
     }
 
-    internal fun canDispatch(): Boolean = synchronized(lock) { open && pending.isEmpty() }
+    internal fun canDispatch(): Boolean = synchronized(lock) { open && !pause && pending.isEmpty() }
 
     internal fun closeIfEmpty(): Boolean = synchronized(lock) {
-        if (pending.isNotEmpty()) return@synchronized false
+        if (pause || pending.isNotEmpty()) return@synchronized false
         open = false
         true
     }

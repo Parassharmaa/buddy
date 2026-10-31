@@ -787,4 +787,92 @@ class AgentRunnerTest {
         assertEquals(RunState.BLOCKED, result.run.state)
         assertEquals(0, prepared)
     }
+
+    @Test fun pauseBeforeStartingClosesAdmissionWithoutCallingTheModel() = runTest {
+        val inbox = AgentInbox()
+        assertTrue(inbox.requestPause())
+        assertFalse(inbox.requestPause())
+        val model = Model { error("A paused run must not call the provider") }
+        val result = runner(model).run(request, config, inbox = inbox)
+        assertEquals(RunState.PAUSED, result.run.state)
+        assertEquals(0, model.calls)
+        assertFalse(inbox.offer("A later update"))
+        assertFalse(inbox.requestPause())
+    }
+
+    @Test fun coordinatorPauseCancelsAPendingModelRequestAndPreservesTheBudgetForResume() = runTest {
+        val coordinator = AgentCoordinator()
+        val started = CompletableDeferred<Unit>()
+        var cancelled = false
+        val model = Model {
+            started.complete(Unit)
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled = true
+            }
+        }
+        val task = async { coordinator.run(runner(model), request, config) }
+        started.await()
+        assertTrue(coordinator.pause(request.conversationId))
+        val saved = task.await()
+        assertTrue(cancelled)
+        assertEquals(RunState.PAUSED, saved.run.state)
+        assertEquals(1, saved.modelRequests)
+        assertFalse(coordinator.isRunning(request.conversationId))
+        assertFalse(coordinator.pause(request.conversationId))
+        val fresh = tool { AgentInvocation.Read { observation.copy(id = "new-after-pause") } }
+        val resumedModel = Model { if (it == 0) calls("observe") else finish("new-after-pause") }
+        val resumed = runner(resumedModel, listOf(fresh)).resume(saved, config, "Continue after the native handover")
+        assertEquals(RunState.DONE, resumed.run.state)
+        assertEquals(3, resumed.modelRequests)
+    }
+
+    @Test fun pauseWaitsForADispatchedEffectAndNeverOverridesAnUncertainOutcome() = runTest {
+        for (uncertain in listOf(false, true)) {
+            val inbox = AgentInbox()
+            val dispatched = CompletableDeferred<Unit>()
+            val settle = CompletableDeferred<Unit>()
+            val write = tool("write", Effect.DRAFT) {
+                AgentInvocation.Action(action) {
+                    dispatched.complete(Unit)
+                    settle.await()
+                    if (uncertain) ExecutionResult.Uncertain else ExecutionResult.Verified(listOf("settled-effect"))
+                }
+            }
+            val model = Model { calls("observe", "write") }
+            val task = async { runner(model, listOf(tool(), write)).run(request, config, inbox = inbox) }
+            dispatched.await()
+            assertTrue(inbox.requestPause())
+            assertFalse(task.isCompleted)
+            settle.complete(Unit)
+            val saved = task.await()
+            assertEquals(if (uncertain) RunState.UNKNOWN else RunState.PAUSED, saved.run.state)
+            assertEquals(1, model.calls)
+            if (!uncertain) assertTrue("settled-effect" in saved.run.evidenceIds)
+            assertTrue(saved.messages.filter { it.role == "tool" }.size == 2)
+        }
+    }
+
+    @Test fun pausingDuringProviderBackoffWakesWithoutAnotherRequest() = runTest {
+        val inbox = AgentInbox()
+        val waiting = CompletableDeferred<Unit>()
+        val model = Model { throw ModelFailure("rate_limit", "Synthetic throttling") }
+        val agent = AgentRunner(
+            model,
+            listOf(tool()),
+            ObservationPrivacyGate(emptySet()),
+            { true },
+            persist = { if (it.run.summary == "Waiting before a bounded model retry") waiting.complete(Unit) },
+            retainObservation = {},
+            now = { testScheduler.currentTime }
+        )
+        val task = async { agent.run(request, config, inbox = inbox) }
+        waiting.await()
+        assertTrue(inbox.requestPause())
+        val result = task.await()
+        assertEquals(RunState.PAUSED, result.run.state)
+        assertEquals(1, model.calls)
+        assertEquals(0L, testScheduler.currentTime)
+    }
 }

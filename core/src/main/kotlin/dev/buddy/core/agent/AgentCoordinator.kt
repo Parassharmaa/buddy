@@ -17,6 +17,10 @@ class AgentCoordinator {
         active[conversationId]?.inbox?.offer(text) == true
     }
 
+    fun pause(conversationId: String): Boolean = synchronized(lock) {
+        active[conversationId]?.inbox?.requestPause() == true
+    }
+
     fun stop(conversationId: String): Boolean {
         val task = synchronized(lock) { active[conversationId]?.task } ?: return false
         task.cancel()
