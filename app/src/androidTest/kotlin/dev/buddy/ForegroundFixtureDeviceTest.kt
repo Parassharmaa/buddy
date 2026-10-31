@@ -92,6 +92,11 @@ class ForegroundFixtureDeviceTest {
             val check = async(Dispatchers.Default) {
                 opened.runConnectedCheck(helper) { stage ->
                     if (stage == "Checking private Unicode edit 1 of 3") started.complete(Unit)
+                    if (stage == "Checking protected-page suppression") {
+                        val preview = withContext(Dispatchers.Main) { requireNotNull(opened.preview) }
+                        assertFalse(preview.hidden)
+                        assertTrue(preview.text.orEmpty().contains("こんにちは"))
+                    }
                 }
             }
             withTimeout(10_000) { started.await() }
@@ -103,6 +108,7 @@ class ForegroundFixtureDeviceTest {
             }
             assertTrue(check.await().concurrentTypingObserved)
             withContext(Dispatchers.Main) {
+                org.junit.Assert.assertNull(opened.preview)
                 val text = opened.findViewById<EditText>(android.R.id.edit).text
                 assertTrue(text.isNotEmpty() && text.all { it == 'a' })
             }

@@ -37,7 +37,8 @@ internal object ForegroundFixtureCheck {
         helper: IBuddyHelper,
         visible: () -> Boolean,
         physical: suspend (String) -> PhysicalFixtureSample,
-        stage: suspend (String) -> Unit
+        stage: suspend (String) -> Unit,
+        preview: suspend (FixturePreview?) -> Unit = {}
     ): ForegroundFixtureResult = withContext(Dispatchers.IO) {
         check(visible())
         withTimeout(15_000) {
@@ -58,6 +59,7 @@ internal object ForegroundFixtureCheck {
                         recordEvidence = {
                             check(observations.size < 32)
                             observations[it.id] = it
+                            preview(FixturePreview.from(it))
                         }
                     )
                     workspace = opened
@@ -112,6 +114,7 @@ internal object ForegroundFixtureCheck {
                     workspace?.close()
                     observations.clear()
                     journal.clear()
+                    withContext(kotlinx.coroutines.NonCancellable) { preview(null) }
                 }
             }
         }

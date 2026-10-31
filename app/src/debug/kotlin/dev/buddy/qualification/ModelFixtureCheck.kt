@@ -43,7 +43,8 @@ internal object ModelFixtureCheck {
         visible: () -> Boolean,
         refreshAuthorization: suspend () -> Long,
         stopTransport: () -> Unit,
-        stage: suspend (String) -> Unit
+        stage: suspend (String) -> Unit,
+        preview: suspend (FixturePreview?) -> Unit = {}
     ): Unit = withContext(Dispatchers.IO) {
         coroutineScope {
             check(visible())
@@ -63,7 +64,9 @@ internal object ModelFixtureCheck {
             }
             suspend fun retain(observation: Observation) {
                 check(observation.id in retained || retained.size < 32)
-                retained[observation.id] = project(observation)
+                val projected = project(observation)
+                retained[observation.id] = projected
+                preview(FixturePreview.from(projected))
             }
             val journal = ForegroundFixtureCheck.Journal()
             ForegroundFixtureCheck.Drain().use { frames ->
@@ -169,6 +172,7 @@ internal object ModelFixtureCheck {
                     retained.clear()
                     native = null
                     journal.clear()
+                    withContext(NonCancellable) { preview(null) }
                 }
             }
         }
