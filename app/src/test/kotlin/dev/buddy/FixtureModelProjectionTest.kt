@@ -60,10 +60,13 @@ class FixtureModelProjectionTest {
         listOf(
             input.copy(protected = true),
             input.copy(credentialSurface = true),
-            input.copy(excludedOverlay = true)
+            input.copy(excludedOverlay = true),
+            input.copy(nodes = input.nodes.map { it.copy(password = true) }),
+            input.copy(nodes = input.nodes.map { it.copy(packageName = "other.app") })
         ).forEach { observation ->
             val safe = projection.project(observation)
             assertTrue(safe.nodes.isEmpty())
+            assertTrue(safe.protected || safe.credentialSurface || safe.excludedOverlay)
             assertFalse(Json.encodeToString(safe).contains("private-fingerprint-canary"))
         }
     }

@@ -7,8 +7,14 @@ import dev.buddy.core.sha256
 internal class FixtureModelProjection(private val baseline: String, private val goal: String) {
     fun project(observation: Observation): Observation {
         check(observation.app == "dev.buddy.fixture")
-        if (observation.protected || observation.credentialSurface || observation.excludedOverlay) {
-            return observation.copy(nodes = emptyList(), revision = 0, fingerprint = sha256("suppressed fixture"))
+        val unsafe = observation.nodes.any { it.password || it.packageName != "dev.buddy.fixture" }
+        if (observation.protected || observation.credentialSurface || observation.excludedOverlay || unsafe) {
+            return observation.copy(
+                nodes = emptyList(),
+                revision = 0,
+                fingerprint = sha256("suppressed fixture"),
+                excludedOverlay = observation.excludedOverlay || unsafe
+            )
         }
         val editor = observation.nodes.single { it.editable && !it.password }
         check(editor.packageName == "dev.buddy.fixture")
