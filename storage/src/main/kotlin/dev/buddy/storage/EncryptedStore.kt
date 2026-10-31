@@ -44,6 +44,9 @@ interface RecordDao {
     @Query("SELECT * FROM records WHERE category = :category")
     suspend fun all(category: String): List<EncryptedRecord>
 
+    @Query("SELECT * FROM records WHERE category = :category AND id LIKE :prefix || '%' ORDER BY updatedAt DESC")
+    suspend fun byPrefix(category: String, prefix: String): List<EncryptedRecord>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(record: EncryptedRecord)
 
@@ -77,6 +80,7 @@ class EncryptedStore(context: Context) :
     }
     private val database = Room.databaseBuilder(context, BuddyDatabase::class.java, "buddy.db").build()
     private val dao = database.records()
+    val artifacts: WorkspaceArtifacts by lazy { WorkspaceArtifacts(context.applicationContext, this) }
     private val key: SecretKey by lazy {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("buddy.records.v1", null) as SecretKey?)
@@ -115,19 +119,53 @@ class EncryptedStore(context: Context) :
                 decrypt(it)
         }
     }.flowOn(Dispatchers.IO)
-    suspend fun remove(id: String) = dao.remove(id)
-    suspend fun clear() = dao.clear()
+    suspend fun list(category: String, prefix: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        require(prefix.isNotEmpty() && prefix.none { it == '%' || it == '_' })
+        dao.byPrefix(category, prefix).map { it.id to decrypt(it) }
+    }
+    suspend fun remove(id: String) {
+        val workspace = id.removePrefix("conversation:")
+        if (id.startsWith("conversation:") &&
+            runCatching { java.util.UUID.fromString(workspace).toString() == workspace }.getOrDefault(false)
+        ) {
+            artifacts.mutateRecords {
+                database.withTransaction {
+                    dao.remove(id)
+                    dao.byPrefix("artifact", "artifact:$workspace:").forEach { dao.remove(it.id) }
+                }
+            }
+        } else {
+            dao.remove(id)
+        }
+    }
+    suspend fun clear() = artifacts.clearRecordsAndFiles { dao.clear() }
     suspend fun historyRetention(): HistoryRetention = get("history-retention")?.let(HistoryRetention::valueOf)
         ?: HistoryRetention.THIRTY_DAYS
-    suspend fun setHistoryRetention(retention: HistoryRetention) = database.withTransaction {
+    suspend fun setHistoryRetention(retention: HistoryRetention) {
         put("history-retention", "settings", retention.name)
         expireHistory()
     }
-    suspend fun expireHistory() = database.withTransaction {
-        val days = historyRetention().days ?: return@withTransaction
-        val cutoff = System.currentTimeMillis() - days.toLong() * 24 * 60 * 60 * 1000
-        dao.expire("conversation", cutoff)
-        // Action records and unresolved barriers must survive ordinary history retention.
+    suspend fun expireHistory() {
+        artifacts.mutateRecords {
+            val days = historyRetention().days
+            if (days != null) {
+                val cutoff = System.currentTimeMillis() - days.toLong() * 24 * 60 * 60 * 1000
+                database.withTransaction {
+                    val expired = dao.all("conversation").filter { it.updatedAt < cutoff }
+                    expired.forEach { conversation ->
+                        val workspace = conversation.id.removePrefix("conversation:")
+                        if (runCatching {
+                                java.util.UUID.fromString(workspace).toString() == workspace
+                            }.getOrDefault(false)
+                        ) {
+                            dao.byPrefix("artifact", "artifact:$workspace:").forEach { dao.remove(it.id) }
+                        }
+                    }
+                    dao.expire("conversation", cutoff)
+                    // Action records and unresolved barriers survive ordinary history retention.
+                }
+            }
+        }
     }
     override suspend fun unresolved(operationKey: String): Boolean = dao.get("barrier:$operationKey") != null
     override suspend fun begin(record: ActionRecord, approval: Approval?) = database.withTransaction {
