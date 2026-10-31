@@ -117,7 +117,7 @@ internal object ForegroundFixtureCheck {
         }
     }
 
-    private class Journal : ActionJournal {
+    internal class Journal : ActionJournal {
         private val records = linkedMapOf<String, ActionRecord>()
         private val barriers = mutableSetOf<String>()
         override suspend fun unresolved(operationKey: String) = operationKey in barriers
@@ -140,7 +140,7 @@ internal object ForegroundFixtureCheck {
         }
     }
 
-    private class Drain : Closeable {
+    internal class Drain : Closeable {
         private val reader = ImageReader.newInstance(720, 1280, PixelFormat.RGBA_8888, 2)
         private val thread = HandlerThread("buddy-engineering-frames").apply { start() }
         private val lock = Any()

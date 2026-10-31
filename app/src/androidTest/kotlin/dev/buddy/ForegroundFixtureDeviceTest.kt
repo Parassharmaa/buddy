@@ -6,8 +6,16 @@ import android.os.ParcelFileDescriptor
 import android.widget.EditText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.buddy.core.ChatMessage
+import dev.buddy.core.FunctionCall
+import dev.buddy.core.ModelConfig
+import dev.buddy.core.ModelReply
+import dev.buddy.core.ToolCall
+import dev.buddy.core.model.ChatModel
 import dev.buddy.phone.FixtureScreenService
+import dev.buddy.qualification.ModelFixtureCheck
 import dev.buddy.qualification.PhoneQualificationActivity
+import dev.buddy.shell.IBuddyHelper
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -15,14 +23,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ForegroundFixtureDeviceTest {
-    @Test(timeout = 60_000)
-    fun foregroundProgramKeepsPhysicalTypingScopedAndSuppressesSecureContent() = runBlocking {
+    private suspend fun withForeground(
+        action: suspend (PhoneQualificationActivity, IBuddyHelper, UiAutomation) -> Unit
+    ) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
@@ -48,22 +65,7 @@ class ForegroundFixtureDeviceTest {
                 withTimeout(5_000) {
                     while (!withContext(Dispatchers.Main) { opened.hasWindowFocus() }) delay(50)
                 }
-                val started = CompletableDeferred<Unit>()
-                val check = async(Dispatchers.Default) {
-                    opened.runConnectedCheck(bootstrap.helper) { stage ->
-                        if (stage == "Checking private Unicode edit 1 of 3") started.complete(Unit)
-                    }
-                }
-                withTimeout(10_000) { started.await() }
-                while (check.isActive) {
-                    shell("input -d 0 text a")
-                    delay(100)
-                }
-                assertTrue(check.await().concurrentTypingObserved)
-                withContext(Dispatchers.Main) {
-                    val text = opened.findViewById<EditText>(android.R.id.edit).text
-                    assertTrue(text.isNotEmpty() && text.all { it == 'a' })
-                }
+                action(opened, bootstrap.helper, automation)
             }
         } finally {
             withContext(Dispatchers.Main) { activity?.finish() }
@@ -76,6 +78,94 @@ class ForegroundFixtureDeviceTest {
                 shell("settings delete secure accessibility_enabled")
             } else {
                 shell("settings put secure accessibility_enabled $enabled")
+            }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun foregroundProgramKeepsPhysicalTypingScopedAndSuppressesSecureContent() = runBlocking {
+        withForeground { opened, helper, automation ->
+            val started = CompletableDeferred<Unit>()
+            val check = async(Dispatchers.Default) {
+                opened.runConnectedCheck(helper) { stage ->
+                    if (stage == "Checking private Unicode edit 1 of 3") started.complete(Unit)
+                }
+            }
+            withTimeout(10_000) { started.await() }
+            while (check.isActive) {
+                ParcelFileDescriptor.AutoCloseInputStream(
+                    automation.executeShellCommand("input -d 0 text a")
+                ).use { it.readNBytes(4096) }
+                delay(100)
+            }
+            assertTrue(check.await().concurrentTypingObserved)
+            withContext(Dispatchers.Main) {
+                val text = opened.findViewById<EditText>(android.R.id.edit).text
+                assertTrue(text.isNotEmpty() && text.all { it == 'a' })
+            }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun boundedModelLoopVerifiesThePrivateDraftWithoutReadingThePhysicalField() = runBlocking {
+        withForeground { opened, helper, _ ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            withContext(Dispatchers.Main) {
+                opened.findViewById<EditText>(android.R.id.edit).apply {
+                    setText("physical-field-private-canary")
+                    requestFocus()
+                }
+            }
+            var turn = 0
+            val model = object : ChatModel {
+                override suspend fun complete(
+                    config: ModelConfig,
+                    messages: List<ChatMessage>,
+                    tools: List<JsonObject>
+                ): ModelReply {
+                    assertFalse(messages.any { it.content.orEmpty().contains("physical-field-private-canary") })
+                    val name = when (turn++) {
+                        0 -> "fixture_observe"
+                        1 -> "fixture_set_test_draft"
+                        else -> "end_task"
+                    }
+                    val arguments = if (name == "end_task") {
+                        val result = Json.parseToJsonElement(requireNotNull(messages.last().content)).jsonObject
+                        buildJsonObject {
+                            put("outcome", "Controlled draft set")
+                            put("evidence_ids", result.getValue("evidence_ids") as JsonArray)
+                        }.toString()
+                    } else {
+                        "{}"
+                    }
+                    return ModelReply(
+                        ChatMessage(
+                            "assistant",
+                            toolCalls = listOf(
+                                ToolCall("model-fixture-$turn", function = FunctionCall(name, arguments))
+                            )
+                        ),
+                        10,
+                        "tool_calls"
+                    )
+                }
+            }
+            ModelFixtureCheck.run(
+                context,
+                helper,
+                ModelConfig("https://fixture-model.invalid/v1", "native-fixture", ""),
+                model,
+                visible = opened::isCheckVisible,
+                refreshAuthorization = { error("The deterministic fixture should finish before renewal") },
+                stopTransport = {},
+                stage = {}
+            )
+            assertEquals(3, turn)
+            withContext(Dispatchers.Main) {
+                assertEquals(
+                    "physical-field-private-canary",
+                    opened.findViewById<EditText>(android.R.id.edit).text.toString()
+                )
             }
         }
     }

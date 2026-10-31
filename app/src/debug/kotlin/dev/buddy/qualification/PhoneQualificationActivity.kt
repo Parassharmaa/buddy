@@ -44,11 +44,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
+import dev.buddy.BuddyApplication
+import dev.buddy.adb.AdbIdentity
+import dev.buddy.adb.AdbTransport
+import dev.buddy.connection.DaemonAuthorization
 import dev.buddy.connection.PhoneConnection
+import dev.buddy.core.LoopbackPort
+import dev.buddy.core.ModelConfig
+import dev.buddy.core.model.ModelClient
 import dev.buddy.design.BuddyTheme
 import dev.buddy.phone.FixtureScreenService
 import dev.buddy.shell.IBuddyHelper
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,6 +64,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 
 class PhoneQualificationActivity : ComponentActivity() {
     private val focused = AtomicBoolean()
@@ -130,10 +139,16 @@ class PhoneQualificationActivity : ComponentActivity() {
                     Text("Physical-screen typing fixture", style = MaterialTheme.typography.titleMedium)
                     AndroidView(factory = { physical }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp))
                     Button(
-                        onClick = ::startCheck,
+                        onClick = { startCheck() },
                         enabled = !busy && connected && networkAllowed && Build.VERSION.SDK_INT >= 34 &&
                             port.toIntOrNull() in 1..65535
                     ) { Text("Run foreground check") }
+                    Text("The model check sends fixed synthetic fixture data to the model saved in Settings.")
+                    Button(
+                        onClick = { startCheck(useModel = true) },
+                        enabled = !busy && connected && networkAllowed && Build.VERSION.SDK_INT >= 34 &&
+                            port.toIntOrNull() in 1..65535
+                    ) { Text("Check configured model on fixture") }
                     if (busy) TextButton(onClick = ::stopCheck) { Text("Stop check") }
                     Text(status)
                     Text(
@@ -172,7 +187,7 @@ class PhoneQualificationActivity : ComponentActivity() {
         return ForegroundFixtureCheck.run(
             applicationContext,
             helper,
-            visible = { visible.get() && focused.get() },
+            visible = ::isCheckVisible,
             physical = { marker ->
                 withContext(Dispatchers.Main.immediate) {
                     PhysicalFixtureSample(physical.hasFocus(), edits, physical.text.contains(marker))
@@ -184,10 +199,35 @@ class PhoneQualificationActivity : ComponentActivity() {
             }
         )
     }
+    internal fun isCheckVisible(): Boolean = visible.get() && focused.get()
+    private suspend fun runConnectedModel(helper: IBuddyHelper, config: ModelConfig, port: LoopbackPort) {
+        val socket = AtomicReference<AdbTransport?>()
+        val authorization = DaemonAuthorization(applicationContext, AdbIdentity())
+        ModelClient().use { model ->
+            ModelFixtureCheck.run(
+                applicationContext,
+                helper,
+                config,
+                model,
+                visible = ::isCheckVisible,
+                refreshAuthorization = {
+                    check(isCheckVisible())
+                    authorization.refresh(
+                        helper,
+                        port,
+                        onOpen = { socket.set(it) },
+                        onClose = { socket.compareAndSet(it, null) }
+                    )
+                },
+                stopTransport = { socket.getAndSet(null)?.close() },
+                stage = { value -> withContext(Dispatchers.Main.immediate) { status = value } }
+            )
+        }
+    }
     private fun stopCheck() {
         running?.cancel()
     }
-    private fun startCheck() {
+    private fun startCheck(useModel: Boolean = false) {
         if (busy || !connected || !networkAllowed || !visible.get() || !focused.get() ||
             Build.VERSION.SDK_INT < 34
         ) {
@@ -198,13 +238,30 @@ class PhoneQualificationActivity : ComponentActivity() {
         physical.requestFocus()
         running = lifecycleScope.launch {
             try {
+                val config = if (useModel) {
+                    withContext(Dispatchers.IO) {
+                        (application as BuddyApplication).store.get("model-config")?.let {
+                            Json.decodeFromString<ModelConfig>(it)
+                        }
+                    } ?: run {
+                        status = "Save and test a model in Settings first."
+                        return@launch
+                    }
+                } else {
+                    null
+                }
                 status = "Connecting to local wireless debugging"
                 withTimeout(30_000) { phone.connect(selected) }
-                val result = runConnectedCheck(phone.engineeringHelper())
-                status = if (result.concurrentTypingObserved) {
-                    "Foreground checks passed; concurrent physical typing was observed. Full M0 qualification is pending."
+                if (config != null) {
+                    runConnectedModel(phone.engineeringHelper(), config, LoopbackPort(selected))
+                    status = "Configured model completed the controlled fixture task. Full M0 qualification is pending."
                 } else {
-                    "Foreground checks passed. Concurrent typing was not assessed; full M0 qualification is pending."
+                    val result = runConnectedCheck(phone.engineeringHelper())
+                    status = if (result.concurrentTypingObserved) {
+                        "Foreground checks passed; concurrent physical typing was observed. Full M0 qualification is pending."
+                    } else {
+                        "Foreground checks passed. Concurrent typing was not assessed; full M0 qualification is pending."
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 status = "Check stopped. Start a fresh check when ready."
