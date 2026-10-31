@@ -9,8 +9,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ScheduledFuture
 
-class AdbTransport internal constructor(private val identity: AdbIdentity, private val timeoutMs: Long) : Closeable {
-    constructor(identity: AdbIdentity) : this(identity, 20_000)
+class AdbTransport(private val identity: AdbIdentity, private val timeoutMs: Long = 20_000) : Closeable {
     init {
         require(timeoutMs in 1..30_000)
     }
