@@ -148,6 +148,12 @@ import dev.buddy.BuddyState
                             )
                         }
                     }
+                    message.sources.forEach { source ->
+                        Text(
+                            "Reference: ${source.label}${if (source.truncated) " (excerpt)" else ""}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
         }

@@ -84,7 +84,7 @@ import dev.buddy.storage.WorkspaceArtifact
         if (state.artifacts.isNotEmpty()) {
             Text("Files", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Stored on this device. File contents are not sent to your model.",
+                "Stored on this device. Use with model lets you review and approve sharing text.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -97,6 +97,11 @@ import dev.buddy.storage.WorkspaceArtifact
                         style = MaterialTheme.typography.bodySmall
                     )
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (artifact.mimeType in setOf("text/plain", "text/markdown", "application/json")) {
+                            TextButton(onClick = { model.sources.file(artifact.id) }, enabled = !busy) {
+                                Text("Use with model")
+                            }
+                        }
                         TextButton(onClick = {
                             openArtifact(context, artifact, false, model)
                         }, enabled = !busy) { Text("Open") }

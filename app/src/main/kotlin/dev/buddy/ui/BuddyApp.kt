@@ -116,9 +116,10 @@ private enum class Destination(val label: String) {
                     when (destination) {
                         Destination.CHAT -> Chat(state, { destination = Destination.SETTINGS }, model::draft) {
                             FilesPanel(state, model)
+                            SourcePanel(state, model.sources)
                         }
 
-                        Destination.BROWSER -> BrowserScreen(model.browser, state.artifacts)
+                        Destination.BROWSER -> BrowserScreen(model.browser, state.artifacts, model.sources::page)
 
                         Destination.ACTIVITY -> Activity(state.history, {
                             model.openConversation(it)
@@ -151,6 +152,7 @@ private enum class Destination(val label: String) {
             }
         }
     }
+    SourceConsentDialog(model.sources) { destination = Destination.CHAT }
     state.error?.let { error ->
         AlertDialog(onDismissRequest = model::dismissError, title = {
             Text("Needs attention")
