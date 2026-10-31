@@ -15,6 +15,7 @@ import dev.buddy.core.Effect
 import dev.buddy.core.ExecutionResult
 import dev.buddy.core.Observation
 import dev.buddy.core.UiElement
+import dev.buddy.core.connection.ActiveLease
 import dev.buddy.core.sha256
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
@@ -22,6 +23,7 @@ import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -48,7 +50,7 @@ class FixtureWorkspace private constructor(
     private val executor: ActionExecutor,
     private val lease: String,
     private val token: String,
-    private val deadline: Long,
+    private val initialDeadline: Long,
     private val scope: FixtureDisplayScope,
     private val owner: Binder,
     private val recordEvidence: suspend (Observation) -> Unit
@@ -56,6 +58,12 @@ class FixtureWorkspace private constructor(
     val displayId: Int get() = scope.displayId
     private val closed = AtomicBoolean()
     private val operations = Mutex()
+    private val maintenanceStarted = AtomicBoolean()
+
+    @Volatile private var maintenanceJob: Job? = null
+
+    @Volatile private var activeLease: ActiveLease? = null
+    private val deadline: Long get() = activeLease?.deadline ?: initialDeadline
     private val session = UUID.randomUUID().toString()
     private data class ObservationStamp(val fingerprint: String, val revision: Long, val time: Long)
     private val issued = linkedMapOf<String, ObservationStamp>()
@@ -68,7 +76,10 @@ class FixtureWorkspace private constructor(
         sha256("$session:${scope.displayId}:$generation:" + fixtureFingerprint(nodes))
 
     private fun validateDisplay(): Bundle {
-        check(!closed.get() && !handedOver && owner.isBinderAlive && SystemClock.elapsedRealtime() < deadline)
+        check(
+            !closed.get() && !handedOver && owner.isBinderAlive &&
+                activeLease?.isCurrent != false && SystemClock.elapsedRealtime() < deadline
+        )
         val state = helper.displayState(lease, token)
         check(state.getInt("displayId") == scope.displayId)
         check(state.getInt("width") == scope.width && state.getInt("height") == scope.height)
@@ -272,12 +283,19 @@ class FixtureWorkspace private constructor(
                     val until = SystemClock.elapsedRealtime() + 2_000
                     var evidence = emptyList<String>()
                     while (SystemClock.elapsedRealtime() < until) {
-                        val after = try {
-                            observe()
+                        val captured = try {
+                            snapshot()
                         } catch (_: FixtureScreenChanged) {
                             delay(50)
                             continue
                         }
+                        // Wait only for metadata: each attempt still suppresses all text while unavailable.
+                        // This never re-dispatches the action or extends the verification deadline.
+                        if (captured.metadataPending) {
+                            delay(50)
+                            continue
+                        }
+                        val after = captured.observation
                         val verified = when (prepared.kind) {
                             FixtureActionKind.DRAFT -> after.nodes.any {
                                 it.editable &&
@@ -332,8 +350,49 @@ class FixtureWorkspace private constructor(
         }
     }
 
+    // The host callback must perform the complete fresh-transport UID-2000 proof.
+    // The caller owns this coroutine; cancellation revokes the workspace, including its display.
+    suspend fun maintainAuthorization(refreshAuthorization: suspend () -> Long) = withContext(Dispatchers.IO) {
+        check(maintenanceStarted.compareAndSet(false, true)) { "Workspace maintenance already started" }
+        maintenanceJob = currentCoroutineContext()[Job]
+        val maintenance = ActiveLease(
+            deadline,
+            SystemClock::elapsedRealtime,
+            refreshAuthorization = {
+                operations.withLock {
+                    check(!closed.get() && owner.isBinderAlive)
+                    refreshAuthorization()
+                }
+            },
+            renewLease = {
+                operations.withLock {
+                    check(!closed.get() && owner.isBinderAlive)
+                    val challenge = ByteArray(32).also(SecureRandom()::nextBytes)
+                    val startedAt = SystemClock.elapsedRealtime()
+                    try {
+                        helper.renewLease(lease, challenge)
+                    } finally {
+                        challenge.fill(0)
+                    }
+                    startedAt + ShellProtocol.LEASE_MS
+                }
+            },
+            release = { close() }
+        )
+        activeLease = maintenance
+        try {
+            check(!closed.get())
+            maintenance.maintain()
+        } finally {
+            close()
+        }
+    }
+
     suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
-        if (closed.compareAndSet(false, true)) runCatching { helper.releaseLease(lease) }
+        if (closed.compareAndSet(false, true)) {
+            maintenanceJob?.cancel()
+            runCatching { helper.releaseLease(lease) }
+        }
         Unit
     }
 

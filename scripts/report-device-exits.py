@@ -127,6 +127,20 @@ abort_codes = {
     "check failed": "NATIVE_ASSERTION",
     "pthread_mutex": "NATIVE_MUTEX",
 }
+frame_categories = {
+    "art::jit::": "ART_JIT",
+    "art::gc::": "ART_GC",
+    "art::ClassLinker::": "ART_CLASS_LINKER",
+    "art::JNI<": "ART_JNI",
+    "art::JavaVMExt::JniAbort": "ART_JNI_ABORT",
+    "art::interpreter::": "ART_INTERPRETER",
+    "art_quick_": "ART_QUICK_ENTRY",
+    "art::Thread::": "ART_THREAD",
+    "art::SignalChain::": "ART_SIGNAL",
+    "memcpy": "MEMORY_COPY",
+    "memmove": "MEMORY_COPY",
+    "pthread_mutex": "NATIVE_MUTEX",
+}
 records = []
 record = None
 for line in crash_buffer.splitlines():
@@ -140,7 +154,7 @@ for line in crash_buffer.splitlines():
         if package not in packages:
             record = None
         elif record is None or record["package"] != package:
-            record = {"package": package, "modules": set(), "causes": set()}
+            record = {"package": package, "modules": set(), "causes": set(), "frames": []}
             records.append(record)
     if record is None:
         continue
@@ -150,8 +164,12 @@ for line in crash_buffer.splitlines():
             record["causes"].add("UNCLASSIFIED_ABORT")
     if re.match(r"#\d+\s+pc\s+[0-9a-fA-F]+\b", body):
         record["modules"].update(code for library, code in libraries.items() if library in body)
+        categories = sorted({code for marker, code in frame_categories.items() if marker in body})
+        if categories and len(record["frames"]) < 8:
+            record["frames"].append("+".join(categories))
 for record in records[-5:]:
     if record["modules"] or record["causes"]:
         causes = ",".join(sorted(record["causes"])) or "UNCLASSIFIED"
         modules = ",".join(sorted(record["modules"])) or "UNCLASSIFIED"
-        print(f"Native crash classification ({record['package']}): causes={causes}; modules={modules}")
+        frames = ",".join(record["frames"]) or "UNCLASSIFIED"
+        print(f"Native crash classification ({record['package']}): causes={causes}; modules={modules}; frames={frames}")
