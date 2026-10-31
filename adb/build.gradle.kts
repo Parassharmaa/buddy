@@ -26,5 +26,4 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":pairing-native"))
     implementation(libs.coroutines.android)
-    implementation(libs.conscrypt)
 }

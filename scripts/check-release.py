@@ -75,8 +75,10 @@ with ZipFile(app) as archive:
     if abis != {"arm64-v8a", "x86_64"}:
         raise SystemExit("Optimized APK contains an unsupported or missing native ABI")
     for abi in abis:
-        if not {f"lib/{abi}/libbuddy_pairing.so", f"lib/{abi}/libconscrypt_jni.so"} <= libraries:
-            raise SystemExit(f"Optimized APK has an incomplete pairing/TLS stack for {abi}")
+        if f"lib/{abi}/libbuddy_pairing.so" not in libraries:
+            raise SystemExit(f"Optimized APK has an incomplete native pairing stack for {abi}")
+    if any("conscrypt" in name for name in libraries):
+        raise SystemExit("Platform TLS must not package a second native TLS provider")
     for name in sorted(libraries):
         elf = archive.read(name)
         if elf[:6] != b"\x7fELF\x02\x01":

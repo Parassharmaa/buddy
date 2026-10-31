@@ -1,5 +1,6 @@
 package dev.buddy.adb
 
+import android.net.ssl.SSLSockets
 import dev.buddy.core.LoopbackPort
 import dev.buddy.core.ProtocolException
 import dev.buddy.core.normalizedPairingCode
@@ -14,7 +15,6 @@ import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import org.conscrypt.Conscrypt
 
 // Wire format: AOSP android-16.0.0_r1 pairing_connection and pairing_auth.
 class PairingClient(private val identity: AdbIdentity) : Closeable {
@@ -54,7 +54,10 @@ class PairingClient(private val identity: AdbIdentity) : Closeable {
         try {
             val tls = LocalTls(identity).connect(port, ::own)
             val exchange = NativeSpake2().also { native = it }
-            exported = Conscrypt.exportKeyingMaterial(tls, "adb-label\u0000", null, 64)
+            exported = requireNotNull(SSLSockets.exportKeyingMaterial(tls, "adb-label\u0000", null, 64)) {
+                "Pairing TLS connection is no longer authenticated"
+            }
+            check(exported.size == 64)
             secret = ByteArray(code.size + exported.size)
             code.forEachIndexed { index, c -> secret[index] = c.code.toByte() }
             exported.copyInto(secret, code.size)

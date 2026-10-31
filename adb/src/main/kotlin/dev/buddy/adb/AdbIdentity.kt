@@ -30,7 +30,7 @@ class AdbIdentity {
                     KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
                 )
                     .setKeySize(2048)
-                    // Conscrypt's TLS callback signs an already encoded RSA block. Authorize
+                    // Platform TLS signs an already encoded RSA block. Authorize
                     // that raw operation on this dedicated, non-exportable ADB identity.
                     .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)

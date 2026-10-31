@@ -1,6 +1,7 @@
 package dev.buddy.adb
 
 import android.annotation.SuppressLint
+import android.net.ssl.SSLSockets
 import dev.buddy.core.LoopbackPort
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -13,7 +14,6 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
-import org.conscrypt.Conscrypt
 
 // AOSP ADB accepts server certificates. This is intentionally limited to loopback;
 // real shell-UID nonce authentication remains mandatory before any phone tool.
@@ -65,7 +65,7 @@ internal class LocalTls(identity: AdbIdentity) {
             override fun chooseServerAlias(type: String?, issuers: Array<out Principal>?, socket: Socket?): String? =
                 null
         }
-        context = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider()).apply {
+        context = SSLContext.getInstance("TLSv1.3").apply {
             init(arrayOf(manager), arrayOf(LoopbackAdbTrust()), SecureRandom())
         }
     }
@@ -93,6 +93,7 @@ internal class LocalTls(identity: AdbIdentity) {
             true
         ) as SSLSocket
         ).apply {
+        check(SSLSockets.isSupportedSocket(this)) { "Platform TLS key export is unavailable" }
         enabledProtocols = arrayOf("TLSv1.3")
         soTimeout = 10_000
         tcpNoDelay = true
