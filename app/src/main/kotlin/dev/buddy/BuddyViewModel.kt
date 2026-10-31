@@ -1,5 +1,6 @@
 package dev.buddy
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.buddy.connection.PhoneConnection
@@ -11,8 +12,11 @@ import dev.buddy.core.ModelFailure
 import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.model.ModelClient
+import dev.buddy.files.DocumentAccess
+import dev.buddy.files.FileWorkspaceController
 import dev.buddy.storage.EncryptedStore
 import dev.buddy.storage.HistoryRetention
+import dev.buddy.storage.WorkspaceArtifact
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +41,9 @@ data class BuddyState(
     val modelName: String = "",
     val localHttp: Boolean = false,
     val active: Boolean = false,
+    val importing: Boolean = false,
+    val exporting: Boolean = false,
+    val artifacts: List<WorkspaceArtifact> = emptyList(),
     val draft: String = "",
     val loaded: Boolean = false,
     val retention: HistoryRetention = HistoryRetention.THIRTY_DAYS,
@@ -44,7 +51,11 @@ data class BuddyState(
 )
 private fun newConversation() = Conversation(UUID.randomUUID().toString(), "New conversation")
 
-class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnection) : ViewModel() {
+class BuddyViewModel(
+    private val store: EncryptedStore,
+    val phone: PhoneConnection,
+    private val documents: DocumentAccess? = null
+) : ViewModel() {
     private val client = ModelClient()
     private val _state = MutableStateFlow(BuddyState())
     val state = _state.asStateFlow()
@@ -54,6 +65,7 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     private var loadingJob: Job? = null
     private var epoch = 0
     private val persistence = Mutex()
+    private val files = FileWorkspaceController(store, documents, viewModelScope, _state, persistence)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -110,7 +122,8 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                         current.copy(
                             history = recovered,
                             loaded = true,
-                            conversation = if (removed) newConversation() else current.conversation
+                            conversation = if (removed) newConversation() else current.conversation,
+                            artifacts = if (removed) emptyList() else current.artifacts
                         )
                     }
                 }
@@ -189,7 +202,11 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
 
     fun send() {
         val text = _state.value.draft.trim()
-        if (text.isEmpty() || text.length > 32_768 || !_state.value.loaded) return
+        if (text.isEmpty() || text.length > 32_768 || !_state.value.loaded || _state.value.importing ||
+            _state.value.exporting
+        ) {
+            return
+        }
         val selected = config ?: run {
             _state.update { it.copy(error = "Choose a model in Settings first.") }
             return
@@ -353,16 +370,19 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     }
 
     fun newChat() {
-        if (_state.value.active) return
-        _state.update { it.copy(conversation = newConversation(), draft = "", error = null) }
+        if (_state.value.active || _state.value.importing || _state.value.exporting) return
+        files.cancel()
+        _state.update { it.copy(conversation = newConversation(), draft = "", error = null, artifacts = emptyList()) }
     }
     fun openConversation(id: String) {
-        if (_state.value.active) return
+        if (_state.value.active || _state.value.importing || _state.value.exporting) return
+        files.cancel()
         val saved = _state.value.history.firstOrNull { it.id == id } ?: return
-        _state.update { it.copy(conversation = saved, draft = "", error = null) }
+        _state.update { it.copy(conversation = saved, draft = "", error = null, artifacts = emptyList()) }
+        files.open(id)
     }
     fun setHistoryRetention(retention: HistoryRetention) {
-        if (!_state.value.loaded || _state.value.active) return
+        if (!_state.value.loaded || _state.value.active || _state.value.importing || _state.value.exporting) return
         viewModelScope.launch {
             try {
                 persistence.withLock { store.setHistoryRetention(retention) }
@@ -376,6 +396,7 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     }
     fun deleteAll() {
         if (!_state.value.loaded) return
+        val pendingFiles = files.cancel()
         val pendingModel = stopModel(persistRecord = false)
         val pendingLoad = loadingJob
         loadingJob = null
@@ -387,6 +408,7 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
         _state.update { it.copy(loaded = false, configured = false, active = false, testingModel = false) }
         viewModelScope.launch {
             pendingModel?.join()
+            pendingFiles?.join()
             pendingLoad?.join()
             pendingTest?.join()
             val identityRemoved = phone.disconnect(true)
@@ -409,6 +431,16 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
             loadRecords()
         }
     }
+    fun importDocument(uri: Uri) = files.importDocument(uri)
+    fun cancelFileOperation() {
+        files.cancel()
+    }
+    fun removeArtifact(id: String) = files.removeArtifact(id)
+    fun exportArtifact(id: String, destination: Uri) = files.exportArtifact(id, destination)
+    fun fileError(message: String) {
+        _state.update { it.copy(error = message) }
+    }
+
     fun pair(port: String, code: String) {
         viewModelScope.launch {
             port.toIntOrNull()?.takeIf { it in 1..65535 }?.let { phone.pair(it, code) }

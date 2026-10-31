@@ -87,7 +87,7 @@ private enum class Destination(val label: String) { CHAT("Chat"), ACTIVITY("Acti
                         TextButton(onClick = {
                             model.newChat()
                             destination = Destination.CHAT
-                        }, enabled = !state.active) { Text("New chat") }
+                        }, enabled = !state.active && !state.importing && !state.exporting) { Text("New chat") }
                     }
                     Spacer(Modifier.height(8.dp))
                     HorizontalDivider()
@@ -101,7 +101,9 @@ private enum class Destination(val label: String) { CHAT("Chat"), ACTIVITY("Acti
             Row(Modifier.fillMaxSize().padding(padding)) {
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                     when (destination) {
-                        Destination.CHAT -> Chat(state, { destination = Destination.SETTINGS }, model::draft)
+                        Destination.CHAT -> Chat(state, { destination = Destination.SETTINGS }, model::draft) {
+                            FilesPanel(state, model)
+                        }
 
                         Destination.ACTIVITY -> Activity(state.history, {
                             model.openConversation(it)

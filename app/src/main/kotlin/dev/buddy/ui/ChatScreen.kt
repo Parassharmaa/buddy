@@ -32,7 +32,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.buddy.BuddyState
 
-@Composable internal fun Chat(state: BuddyState, settings: () -> Unit, draft: (String) -> Unit) {
+@Composable internal fun Chat(
+    state: BuddyState,
+    settings: () -> Unit,
+    draft: (String) -> Unit,
+    files: @Composable () -> Unit = {}
+) {
     LazyColumn(
         Modifier.widthIn(max = 760.dp).fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
@@ -46,7 +51,8 @@ import dev.buddy.BuddyState
                 AssistChip(onClick = settings, label = { Text("Phone setup") })
             }
         }
-        if (state.conversation.messages.isEmpty()) {
+        if (state.loaded) item { files() }
+        if (state.conversation.messages.isEmpty() && state.artifacts.isEmpty()) {
             item {
                 Spacer(Modifier.height(24.dp))
                 Text(
@@ -164,7 +170,9 @@ import dev.buddy.BuddyState
             }, modifier = Modifier.weight(1f), maxLines = 5, shape = RoundedCornerShape(24.dp))
             Button(
                 onClick = send,
-                enabled = state.loaded && state.draft.isNotBlank() && state.draft.length <= 32_768,
+                enabled =
+                    state.loaded && !state.importing && !state.exporting && state.draft.isNotBlank() &&
+                        state.draft.length <= 32_768,
                 modifier = Modifier.height(56.dp)
             ) {
                 Text("Send")
