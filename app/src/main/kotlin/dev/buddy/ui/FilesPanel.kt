@@ -37,15 +37,33 @@ import dev.buddy.storage.WorkspaceArtifact
     var exportId by rememberSaveable { mutableStateOf<String?>(null) }
     var removingId by rememberSaveable { mutableStateOf<String?>(null) }
     val documents = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let(model::importDocument)
+        if (uri != null) {
+            if (state.loaded) {
+                model.importDocument(uri)
+            } else {
+                model.fileError("Your conversation is loading. Choose the file again when it opens.")
+            }
+        }
     }
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(model::importDocument)
+        if (uri != null) {
+            if (state.loaded) {
+                model.importDocument(uri)
+            } else {
+                model.fileError("Your conversation is loading. Choose the file again when it opens.")
+            }
+        }
     }
     val export = rememberLauncherForActivityResult(CreateArtifactDocument()) { destination ->
         val id = exportId
         exportId = null
-        if (destination != null && id != null) model.exportArtifact(id, destination)
+        if (destination != null && id != null) {
+            if (state.loaded && state.artifacts.any { it.id == id }) {
+                model.exportArtifact(id, destination)
+            } else {
+                model.fileError("No file was exported. Open its conversation, then choose Save a copy again.")
+            }
+        }
     }
     val busy = state.active || state.importing || state.exporting
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

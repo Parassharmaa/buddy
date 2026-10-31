@@ -80,7 +80,9 @@ class DocumentAccess(context: Context) {
                 var offset = 0
                 while (offset < contents.size) {
                     val count = minOf(16 * 1024, contents.size - offset)
-                    offset += transfer(opened.fileDescriptor, signal, contents, offset, count, writing = true)
+                    val written = transfer(opened.fileDescriptor, signal, contents, offset, count, writing = true)
+                    check(written > 0) { "Document output stopped" }
+                    offset += written
                 }
             } finally {
                 contents.fill(0)
