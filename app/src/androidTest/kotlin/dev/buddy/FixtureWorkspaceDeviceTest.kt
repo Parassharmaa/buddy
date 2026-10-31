@@ -1,10 +1,12 @@
 package dev.buddy
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.core.ActionExecutor
@@ -42,15 +44,39 @@ class FixtureWorkspaceDeviceTest {
     @Test fun secureWindowWithoutAPasswordSuppressesTheOwnedTree() = runBlocking {
         verifyWorkspace(secureOnly = true)
     }
-    private suspend fun verifyWorkspace(secureOnly: Boolean) {
+
+    @Test fun physicalAndPrivateInstancesOfTheSameAppKeepTheirDraftsSeparate() = runBlocking {
+        verifyWorkspace(secureOnly = false, sameApp = true)
+    }
+    private suspend fun verifyWorkspace(secureOnly: Boolean, sameApp: Boolean = false) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        val automationFlags = automation.serviceInfo.flags
         val context = instrumentation.targetContext
         fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
             automation.executeShellCommand(command)
         ).use { it.readNBytes(4096).toString(Charsets.UTF_8).trim() }
+        val physicalPrefix = "Physical-only fixture ${UUID.randomUUID()}"
+        fun editor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            if (node.packageName?.toString() != "dev.buddy.fixture") return null
+            if (node.viewIdResourceName == "dev.buddy.fixture:id/fixture_draft_input") return node
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let { child -> editor(child)?.let { return it } }
+            }
+            return null
+        }
+        suspend fun physicalEditor(): AccessibilityNodeInfo = withTimeout(5_000) {
+            while (true) {
+                val found = automation.windowsOnAllDisplays.get(0).orEmpty().firstNotNullOfOrNull { window ->
+                    window.root?.let(::editor)
+                }
+                if (found != null) return@withTimeout found
+                delay(50)
+            }
+            error("Physical fixture editor unavailable")
+        }
         val originalServices = shell("settings get secure enabled_accessibility_services")
         val originalEnabled = shell("settings get secure accessibility_enabled")
         require(originalServices == "null" || originalServices.matches(Regex("[A-Za-z0-9_.$/:]*")))
@@ -59,6 +85,12 @@ class FixtureWorkspaceDeviceTest {
             ?.let { "$it:$component" } ?: component
         var stage = "enable_fixture_service"
         try {
+            if (sameApp) {
+                automation.serviceInfo = automation.serviceInfo.apply {
+                    flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                        AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                }
+            }
             shell("input keyevent KEYCODE_WAKEUP")
             shell("wm dismiss-keyguard")
             shell("settings put secure enabled_accessibility_services $services")
@@ -66,6 +98,24 @@ class FixtureWorkspaceDeviceTest {
             withTimeout(5_000) { while (!FixtureScreenService.connected) delay(50) }
             stage = "authenticated_helper"
             AuthenticatedHelperFixture.start(context, automation).use { bootstrap ->
+                if (sameApp) {
+                    stage = "launch_physical_fixture_instance"
+                    check(
+                        shell("am start -W --display 0 -f 0x18000000 -n dev.buddy.fixture/.FixtureActivity")
+                            .contains("Status: ok")
+                    )
+                    assertTrue(
+                        physicalEditor().performAction(
+                            AccessibilityNodeInfo.ACTION_SET_TEXT,
+                            Bundle().apply {
+                                putCharSequence(
+                                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                    physicalPrefix
+                                )
+                            }
+                        )
+                    )
+                }
                 FixtureFrameSink().use { frames ->
                     EncryptedStore(context).use { store ->
                         store.clear()
@@ -101,6 +151,7 @@ class FixtureWorkspaceDeviceTest {
                             frames.surface,
                             runId,
                             recordEvidence = { observation ->
+                                check(observation.nodes.none { it.label.contains(physicalPrefix) })
                                 store.put("evidence:${observation.id}", "evidence", Json.encodeToString(observation))
                             }
                         )
@@ -149,6 +200,25 @@ class FixtureWorkspaceDeviceTest {
                             assertTrue("Draft execution: $draftResult", draftResult is ExecutionResult.Verified)
                             stage = "observe_draft"
                             val drafted = ready { it.nodes.any { node -> node.editable && node.label == message } }
+                            if (sameApp) {
+                                assertEquals(physicalPrefix, physicalEditor().text.toString())
+                                assertTrue(
+                                    physicalEditor().performAction(
+                                        AccessibilityNodeInfo.ACTION_SET_TEXT,
+                                        Bundle().apply {
+                                            putCharSequence(
+                                                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                                "$physicalPrefix · user edit"
+                                            )
+                                        }
+                                    )
+                                )
+                                assertTrue(
+                                    ready { observation ->
+                                        observation.nodes.any { it.editable && it.label == message }
+                                    }.nodes.none { it.label.contains(physicalPrefix) }
+                                )
+                            }
                             stage = "reject_forged_payload"
                             val forged = drafted.copy(
                                 nodes = drafted.nodes.map {
@@ -159,7 +229,7 @@ class FixtureWorkspaceDeviceTest {
                             val send = workspace.prepareSend(drafted)
                             stage = "approval_required"
                             assertEquals(ExecutionResult.ApprovalRequired, workspace.execute(send, gate = { gate() }))
-                            assertTrue(workspace.observe().nodes.any { it.label == "Nothing sent" })
+                            ready { it.nodes.any { node -> node.label == "Nothing sent" } }
                             val action = send.proposal
                             val approval = Approval(
                                 UUID.randomUUID().toString(),
@@ -200,6 +270,9 @@ class FixtureWorkspaceDeviceTest {
                                 ExecutionResult.ApprovalRequired,
                                 workspace.execute(workspace.prepareSend(returned), approval, gate = { gate() })
                             )
+                            if (sameApp) {
+                                assertEquals("$physicalPrefix · user edit", physicalEditor().text.toString())
+                            }
                             stage = "suppress_protected_tree"
                             val protectedPage = if (secureOnly) {
                                 workspace.prepareSecurePage(returned)
@@ -208,7 +281,7 @@ class FixtureWorkspaceDeviceTest {
                             }
                             val protectedResult = workspace.execute(protectedPage, gate = { gate() })
                             assertTrue("Protected page: $protectedResult", protectedResult is ExecutionResult.Verified)
-                            val suppressed = workspace.observe()
+                            val suppressed = ready { it.nodes.isEmpty() && (it.protected || it.credentialSurface) }
                             assertTrue(suppressed.nodes.isEmpty())
                             if (secureOnly) {
                                 assertTrue(suppressed.protected && !suppressed.credentialSurface)
@@ -226,6 +299,10 @@ class FixtureWorkspaceDeviceTest {
         } catch (failure: Throwable) {
             throw AssertionError("App fixture workspace failed at $stage", failure)
         } finally {
+            if (sameApp) {
+                shell("am force-stop dev.buddy.fixture")
+                automation.serviceInfo = automation.serviceInfo.apply { flags = automationFlags }
+            }
             if (originalServices == "null" || originalServices.isBlank()) {
                 shell("settings delete secure enabled_accessibility_services")
             } else {
