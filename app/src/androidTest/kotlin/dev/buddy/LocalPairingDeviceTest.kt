@@ -39,9 +39,29 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 // Explicitly opted-in disposable emulator only. Never run Settings automation on a user's phone.
-// Pairing codes remain in memory: no screenshots, UI dumps, logcat, or assertion values.
+// Pairing codes remain in memory and never enter screenshots, UI dumps, logs or assertions.
 @RunWith(AndroidJUnit4::class)
 class LocalPairingDeviceTest {
+    private enum class Stage {
+        ENABLE_WIRELESS_DEBUGGING,
+        WIRELESS_SUPPORT,
+        JOIN_EMULATOR_WIFI,
+        RESET_WIRELESS_DEBUGGING,
+        OPEN_WIRELESS_SETTINGS,
+        ENABLE_WIRELESS_DETAIL_PAGE,
+        WIRELESS_DAEMON_READY,
+        OPEN_PAIRING_DIALOG,
+        READ_PAIRING_DIALOG,
+        LOCAL_TLS_PAIRING,
+        FINISH_PAIRING_DIALOG,
+        WIRELESS_CONNECTION_PORT,
+        AUTHORIZED_TLS_CONNECTION,
+        AUTHENTICATED_HELPER_HANDOFF,
+        HELPER_AFTER_TRANSPORT_CLOSE,
+        FRESH_TRANSPORT_AUTHORIZATION_PROOF,
+        WIRELESS_DEBUGGING_REVOCATION
+    }
+
     @Test(timeout = 90_000)
     fun localPairingAuthorizesTlsAndHelperSurvivesTransportClose() = runBlocking<Unit> {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
@@ -65,7 +85,11 @@ class LocalPairingDeviceTest {
         val identity = AdbIdentity()
         var helper: IBuddyHelper? = null
         var code: CharArray? = null
-        var stage = "enable_wireless_debugging"
+        var stage = Stage.ENABLE_WIRELESS_DEBUGGING
+        fun enter(next: Stage) {
+            stage = next
+            android.util.Log.i("BuddyQualification", "pairing_stage=${next.name}")
+        }
         var sawConfirmation = false
         var allowedConfirmation = false
         var physicalWindowCount = 0
@@ -146,11 +170,12 @@ class LocalPairingDeviceTest {
             return (addressPort ?: portOnly)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
         }
         try {
+            enter(Stage.ENABLE_WIRELESS_DEBUGGING)
             identity.forget()
-            stage = "wireless_support"
+            enter(Stage.WIRELESS_SUPPORT)
             wifiSupported = shell("cmd adb is-wifi-supported") == "true"
             check(wifiSupported) { "Wireless debugging is unavailable on this emulator" }
-            stage = "join_emulator_wifi"
+            enter(Stage.JOIN_EMULATOR_WIFI)
             shell("svc wifi enable")
             if (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) {
                 shell("cmd wifi connect-network AndroidWifi open")
@@ -158,9 +183,9 @@ class LocalPairingDeviceTest {
             withTimeout(10_000) {
                 while (!shell("cmd wifi status").contains("Wifi is connected to", ignoreCase = true)) delay(200)
             }
-            stage = "reset_wireless_debugging"
+            enter(Stage.RESET_WIRELESS_DEBUGGING)
             shell("settings put global adb_wifi_enabled 0")
-            stage = "open_wireless_settings"
+            enter(Stage.OPEN_WIRELESS_SETTINGS)
             // Newer adbd reports its TLS port over the system socket rather than the old
             // service.adb.tls.port property. Read the public Settings screen on every API.
             delay(300)
@@ -200,7 +225,7 @@ class LocalPairingDeviceTest {
                     delay(100)
                 }
             }
-            stage = "enable_wireless_detail_page"
+            enter(Stage.ENABLE_WIRELESS_DETAIL_PAGE)
             withTimeout(15_000) {
                 while (true) {
                     if (allowNetwork()) {
@@ -234,7 +259,7 @@ class LocalPairingDeviceTest {
                     delay(200)
                 }
             }
-            stage = "wireless_daemon_ready"
+            enter(Stage.WIRELESS_DAEMON_READY)
             withTimeout(15_000) {
                 while (true) {
                     if (allowNetwork()) {
@@ -248,7 +273,7 @@ class LocalPairingDeviceTest {
                     delay(200)
                 }
             }
-            stage = "open_pairing_dialog"
+            enter(Stage.OPEN_PAIRING_DIALOG)
             withTimeout(10_000) {
                 while (true) {
                     val item = nodes().firstOrNull {
@@ -259,7 +284,7 @@ class LocalPairingDeviceTest {
                     delay(100)
                 }
             }
-            stage = "read_pairing_dialog"
+            enter(Stage.READ_PAIRING_DIALOG)
             val pairingPort = withTimeout(10_000) {
                 while (true) {
                     if (allowNetwork()) {
@@ -291,7 +316,7 @@ class LocalPairingDeviceTest {
                 error("Pairing details unavailable")
             }
             val connectPort = withContext(Dispatchers.IO) {
-                stage = "local_tls_pairing"
+                enter(Stage.LOCAL_TLS_PAIRING)
                 PairingClient(identity).use { client ->
                     val secret = requireNotNull(code)
                     try {
@@ -300,7 +325,7 @@ class LocalPairingDeviceTest {
                         secret.fill('\u0000')
                     }
                 }
-                stage = "finish_pairing_dialog"
+                enter(Stage.FINISH_PAIRING_DIALOG)
                 withTimeout(10_000) {
                     while (true) {
                         val controls = nodes()
@@ -317,7 +342,7 @@ class LocalPairingDeviceTest {
                         delay(100)
                     }
                 }
-                stage = "wireless_connection_port"
+                enter(Stage.WIRELESS_CONNECTION_PORT)
                 val portSummary = Pattern.compile(
                     ".*(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}.*|\\s*:\\s*[0-9]{1,5}\\s*"
                 )
@@ -378,9 +403,9 @@ class LocalPairingDeviceTest {
                 val nonce = pending.nonce.copyOf()
                 try {
                     AdbTransport(identity).use { transport ->
-                        stage = "authorized_tls_connection"
+                        enter(Stage.AUTHORIZED_TLS_CONNECTION)
                         transport.connect(LoopbackPort(connectPort))
-                        stage = "authenticated_helper_handoff"
+                        enter(Stage.AUTHENTICATED_HELPER_HANDOFF)
                         transport.bootstrap(BootstrapCommand.forInstalledApp(context), nonce)
                         helper = requireNotNull(withTimeout(5_000) { pending.result.await() })
                     }
@@ -389,11 +414,11 @@ class LocalPairingDeviceTest {
                 }
                 connectPort
             }
-            stage = "helper_after_transport_close"
+            enter(Stage.HELPER_AFTER_TRANSPORT_CLOSE)
             delay(1_000)
             val connectedHelper = requireNotNull(helper)
             assertEquals(ShellProtocol.SHELL_UID, connectedHelper.capabilities().getInt("helperUid"))
-            stage = "fresh_transport_authorization_proof"
+            enter(Stage.FRESH_TRANSPORT_AUTHORIZATION_PROOF)
             val previousProof = connectedHelper.capabilities().getLong("authorizationDeadline")
             val proof = BootstrapProvider.prepare(ShellProtocol.REVALIDATE, connectedHelper)
             val challenge = proof.nonce.copyOf()
@@ -412,7 +437,7 @@ class LocalPairingDeviceTest {
                 challenge.fill(0)
                 BootstrapProvider.clear()
             }
-            stage = "wireless_debugging_revocation"
+            enter(Stage.WIRELESS_DEBUGGING_REVOCATION)
             val lastProof = connectedHelper.capabilities().getLong("authorizationDeadline")
             check(lastProof > SystemClock.elapsedRealtime())
             shell("settings put global adb_wifi_enabled 0")

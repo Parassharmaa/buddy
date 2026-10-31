@@ -58,3 +58,39 @@ for line in events.splitlines():
         continue
     signal = f"; signal={message}" if message in signals else ""
     print(f"Test process crash ({package}): pid={pid}; kind={kind}{signal}")
+
+
+# Fixed enum labels locate an aborted pairing fixture; all other log contents are discarded.
+pairing_stages = {
+    "ENABLE_WIRELESS_DEBUGGING",
+    "WIRELESS_SUPPORT",
+    "JOIN_EMULATOR_WIFI",
+    "RESET_WIRELESS_DEBUGGING",
+    "OPEN_WIRELESS_SETTINGS",
+    "ENABLE_WIRELESS_DETAIL_PAGE",
+    "WIRELESS_DAEMON_READY",
+    "OPEN_PAIRING_DIALOG",
+    "READ_PAIRING_DIALOG",
+    "LOCAL_TLS_PAIRING",
+    "FINISH_PAIRING_DIALOG",
+    "WIRELESS_CONNECTION_PORT",
+    "AUTHORIZED_TLS_CONNECTION",
+    "AUTHENTICATED_HELPER_HANDOFF",
+    "HELPER_AFTER_TRANSPORT_CLOSE",
+    "FRESH_TRANSPORT_AUTHORIZATION_PROOF",
+    "WIRELESS_DEBUGGING_REVOCATION",
+}
+try:
+    qualification = subprocess.run(
+        ["adb", "logcat", "-b", "main", "-d", "-v", "brief", "-s", "BuddyQualification:I", "*:S"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5,
+    ).stdout
+except (OSError, subprocess.TimeoutExpired):
+    qualification = ""
+reported = []
+for line in qualification.splitlines():
+    stage = re.fullmatch(r"I/BuddyQualification\(\s*\d+\):\s*pairing_stage=([A-Z_]+)", line.strip())
+    if stage and stage[1] in pairing_stages:
+        reported.append(stage[1])
+for stage in reported[-20:]:
+    print(f"Pairing qualification stage: {stage}")
