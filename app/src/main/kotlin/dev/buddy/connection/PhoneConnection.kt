@@ -14,13 +14,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -171,6 +174,14 @@ class PhoneConnection(private val context: Context) {
                     client.close()
                     return@withContext
                 }
+                // A blocked socket read must close when the owning coroutine is cancelled.
+                val cancellation = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        client.close()
+                    }
+                }
                 var bootstrap: BootstrapProvider.Pending? = null
                 var retained = false
                 try {
@@ -220,6 +231,7 @@ class PhoneConnection(private val context: Context) {
                             "Connection test failed. Check wireless debugging, the connection port and pairing authorization."
                     }
                 } finally {
+                    cancellation.cancel()
                     client.close()
                     BootstrapProvider.clear()
                     // A callback can complete just as awaiting it is cancelled. Never leave that helper behind.
