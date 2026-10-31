@@ -93,7 +93,10 @@ class SourceConsentDeviceTest {
                                     flush()
                                 }
                                 started.complete(Unit)
-                                if (input.read() == -1) closed.complete(Unit)
+                                val end = runCatching { input.read() }
+                                if (end.getOrNull() == -1 || end.exceptionOrNull() is java.net.SocketException) {
+                                    closed.complete(Unit)
+                                }
                                 return@use
                             }
                             val reply = if (catalog) {
