@@ -82,6 +82,12 @@ class BuddyViewModel(
     internal val browser = BrowserController(browserContext, viewModelScope)
     internal val sources = SourceController(store, viewModelScope, _state, { config }, browser::source)
     internal val memory = MemoryController(store.memories, _state, viewModelScope)
+    internal val schedules = dev.buddy.scheduling.ScheduleController(
+        store.schedules,
+        (browserContext?.applicationContext as? BuddyApplication)?.schedules,
+        _state,
+        viewModelScope
+    )
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -456,9 +462,11 @@ class BuddyViewModel(
             pendingTest?.join()
             val identityRemoved = phone.disconnect(true)
             try {
+                schedules.clear()
                 browser.clearData()
                 applicationContext?.let { dev.buddy.files.ArtifactProvider.revokeAll(it) }
                 persistence.withLock { store.clear() }
+                schedules.cleared()
                 config = null
                 _state.value = BuddyState(
                     error = if (identityRemoved) {

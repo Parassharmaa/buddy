@@ -78,7 +78,7 @@ class EncryptedStore(context: Context) :
     ActionJournal,
     java.io.Closeable {
     private companion object {
-        val memoryOperations = Mutex()
+        val privateDataOperations = Mutex()
     }
     override fun close() {
         database.close()
@@ -87,10 +87,11 @@ class EncryptedStore(context: Context) :
     private val dao = database.records()
     val artifacts: WorkspaceArtifacts by lazy { WorkspaceArtifacts(context.applicationContext, this) }
     val memories: MemoryRepository by lazy { MemoryRepository(this) }
-    internal suspend fun <T> mutateMemory(operation: suspend () -> T): T = memoryOperations.withLock {
+    val schedules: ScheduleRepository by lazy { ScheduleRepository(this) }
+    internal suspend fun <T> mutatePrivateRecords(operation: suspend () -> T): T = privateDataOperations.withLock {
         database.withTransaction { operation() }
     }
-    internal suspend fun eraseMemories() = mutateMemory {
+    internal suspend fun eraseMemories() = mutatePrivateRecords {
         dao.all("memory").forEach { dao.remove(it.id) }
         dao.remove("memory-enabled")
     }
@@ -151,7 +152,7 @@ class EncryptedStore(context: Context) :
             dao.remove(id)
         }
     }
-    suspend fun clear() = memoryOperations.withLock { artifacts.clearRecordsAndFiles { dao.clear() } }
+    suspend fun clear() = privateDataOperations.withLock { artifacts.clearRecordsAndFiles { dao.clear() } }
     suspend fun historyRetention(): HistoryRetention = get("history-retention")?.let(HistoryRetention::valueOf)
         ?: HistoryRetention.THIRTY_DAYS
     suspend fun setHistoryRetention(retention: HistoryRetention) {
