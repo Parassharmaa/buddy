@@ -119,6 +119,7 @@ class LocalPairingDeviceTest {
         var portProbeStatus = "not_attempted"
         var pairingCodeSeen = false
         var pairingPortSeen = false
+        var pairingAddressShape = "NOT_SEEN"
         var pairingDialogSeen = false
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
@@ -179,8 +180,8 @@ class LocalPairingDeviceTest {
         }
         fun portIn(text: String): Int? {
             val addressPort = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})").find(text)
-            // Settings can format an empty IPv4 address as :port on an IPv6-only default link.
-            val portOnly = Regex("^\\s*:\\s*([0-9]{1,5})\\s*$").find(text)
+            // Settings concatenates a nullable default-link IPv4 address and the pairing port.
+            val portOnly = Regex("^\\s*(?:null)?:\\s*([0-9]{1,5})\\s*$").find(text)
             return (addressPort ?: portOnly)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
         }
         try {
@@ -316,7 +317,16 @@ class LocalPairingDeviceTest {
                     val pairingCode = codeField?.text?.toString()?.takeIf {
                         it.matches(Regex("[0-9]{3}[\\s\\u00a0\\u202f]?[0-9]{3}"))
                     }
-                    val port = addressField?.text?.toString()?.let(::portIn)
+                    val address = addressField?.text?.toString()
+                    pairingAddressShape = when {
+                        addressField == null -> "MISSING_FIELD"
+                        address.isNullOrBlank() -> "EMPTY"
+                        address.startsWith("null:") -> "NULL_ADDRESS"
+                        address.trimStart().startsWith(":") -> "EMPTY_ADDRESS"
+                        portIn(address) != null -> "ADDRESS_WITH_PORT"
+                        else -> "UNRECOGNIZED"
+                    }
+                    val port = address?.let(::portIn)
                     pairingCodeSeen = pairingCodeSeen || pairingCode != null
                     pairingPortSeen = pairingPortSeen || port != null
                     val dialogVisible = codeField != null || addressField != null
@@ -525,7 +535,8 @@ class LocalPairingDeviceTest {
                     "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled; " +
                     "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen; " +
                     "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts; portProbe=$portProbeStatus; " +
-                    "pairCodeSeen=$pairingCodeSeen; pairPortSeen=$pairingPortSeen; pairDialogSeen=$pairingDialogSeen",
+                    "pairCodeSeen=$pairingCodeSeen; pairPortSeen=$pairingPortSeen; " +
+                    "pairDialogSeen=$pairingDialogSeen; pairAddressShape=$pairingAddressShape",
                 failure
             )
         } finally {
