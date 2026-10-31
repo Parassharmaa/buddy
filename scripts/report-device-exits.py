@@ -154,10 +154,31 @@ for line in crash_buffer.splitlines():
         if package not in packages:
             record = None
         elif record is None or record["package"] != package:
-            record = {"package": package, "modules": set(), "causes": set(), "frames": []}
+            record = {"package": package, "modules": set(), "causes": set(), "frames": [],
+                      "signal": "UNKNOWN", "code": "UNKNOWN", "address": "UNKNOWN", "thread": "UNKNOWN"}
             records.append(record)
     if record is None:
         continue
+    signal = re.search(r"signal \d+ \((SIG[A-Z]+)\), code -?\d+ \(([A-Z_]+)\), fault addr (0x[0-9a-fA-F]+|--------)", body)
+    if signal:
+        if signal[1] in {"SIGSEGV", "SIGABRT", "SIGBUS", "SIGILL", "SIGFPE", "SIGTRAP"}:
+            record["signal"] = signal[1]
+        if signal[2] in {"SEGV_MAPERR", "SEGV_ACCERR", "SI_QUEUE", "SI_TKILL", "SI_KERNEL", "BUS_ADRALN", "BUS_ADRERR"}:
+            record["code"] = signal[2]
+        if signal[3].startswith("0x"):
+            address = int(signal[3], 16)
+            record["address"] = "NULL" if address == 0 else "LOW" if address < 4096 else "NONLOW"
+    thread = re.search(r"\btid: \d+, name: (.*?)\s+>>>", body)
+    if thread:
+        name = thread[1]
+        for prefix, category in {
+            "Jit thread pool": "JIT", "HeapTaskDaemon": "GC", "RenderThread": "RENDERER",
+            "DefaultDispatcher": "COROUTINE", "Binder:": "BINDER", "adb-local-tls": "LOCAL_TLS_FIXTURE",
+            "AndroidJUnit": "INSTRUMENTATION", "Instr: dev.buddy": "INSTRUMENTATION", "main": "MAIN",
+        }.items():
+            if name.startswith(prefix):
+                record["thread"] = category
+                break
     if body.startswith("Abort message:"):
         record["causes"].update(code for marker, code in abort_codes.items() if marker in body.lower())
         if not record["causes"]:
@@ -172,4 +193,5 @@ for record in records[-5:]:
         causes = ",".join(sorted(record["causes"])) or "UNCLASSIFIED"
         modules = ",".join(sorted(record["modules"])) or "UNCLASSIFIED"
         frames = ",".join(record["frames"]) or "UNCLASSIFIED"
-        print(f"Native crash classification ({record['package']}): causes={causes}; modules={modules}; frames={frames}")
+        print(f"Native crash classification ({record['package']}): causes={causes}; modules={modules}; frames={frames}; "
+              f"signal={record['signal']}; code={record['code']}; address={record['address']}; thread={record['thread']}")

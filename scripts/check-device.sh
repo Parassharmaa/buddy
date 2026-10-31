@@ -64,6 +64,14 @@ if [[ -n "${BUDDY_EXPECTED_PAGE_SIZE:-}" && "$device_page_size" != "$BUDDY_EXPEC
     exit 1
 fi
 prepare_device
+# Check JNI contracts in every newly started test process on both Android images.
+# Keep the normal runtime/JIT configuration; a crash remains a failed qualification.
+timeout 10 adb shell setprop debug.checkjni 1
+if [[ "$(timeout 5 adb shell getprop debug.checkjni | tr -d '\r')" != 1 ]]; then
+    echo 'JNI contract checking could not be enabled.' >&2
+    exit 1
+fi
+echo 'JNI contract checking enabled for both device suites.'
 report_failed_processes() {
     local previous_pid="$1" current_pid
     current_pid="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || current_pid=''
