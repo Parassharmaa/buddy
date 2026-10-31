@@ -9,12 +9,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
-import android.system.Os
-import android.system.OsConstants
+import android.os.storage.StorageManager
 import androidx.annotation.RequiresApi
+import dev.buddy.files.PrivateFileDescriptors
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.EncryptedStore
-import java.io.File
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -35,12 +34,14 @@ internal class PdfSourceReader(context: Context, private val store: EncryptedSto
         check(operations.tryLock()) { "Another PDF preview is active" }
         try {
             return withContext(Dispatchers.IO) {
+                val ticket = PrivateFileDescriptors.ticket()
                 val bytes = store.artifacts.read(workspace, id, ArtifactReadBudget(PdfLimits.INPUT_BYTES))
                 val descriptor = try {
                     require(bytes.size in 1..PdfLimits.INPUT_BYTES)
-                    readOnlyMemory(bytes)
-                } finally {
+                    readOnlyMemory(bytes, ticket)
+                } catch (failure: Throwable) {
                     bytes.fill(0)
+                    throw failure
                 }
                 descriptor.use { extract(it) }
             }
@@ -48,22 +49,19 @@ internal class PdfSourceReader(context: Context, private val store: EncryptedSto
             operations.unlock()
         }
     }
-    private fun readOnlyMemory(bytes: ByteArray): ParcelFileDescriptor {
-        val descriptor = Os.memfd_create("buddy-pdf-preview", OsConstants.MFD_CLOEXEC)
+    private fun readOnlyMemory(bytes: ByteArray, ticket: Long): ParcelFileDescriptor {
+        val handle = PrivateFileDescriptors.reserve(bytes.size, ticket)
         try {
-            var written = 0
-            while (written < bytes.size) {
-                val count = Os.write(descriptor, bytes, written, bytes.size - written)
-                check(count > 0)
-                written += count
-            }
-            Os.lseek(descriptor, 0, OsConstants.SEEK_SET)
-            return ParcelFileDescriptor.dup(descriptor).use { owned ->
-                // Reopen our own descriptor read-only; the isolated worker receives no writable handle.
-                ParcelFileDescriptor.open(File("/proc/self/fd/${owned.fd}"), ParcelFileDescriptor.MODE_READ_ONLY)
-            }
-        } finally {
-            Os.close(descriptor)
+            check(handle.assign(bytes))
+            // Android supplies a seekable read-only descriptor; no plaintext disk file or /proc reopening.
+            return application.getSystemService(StorageManager::class.java).openProxyFileDescriptor(
+                ParcelFileDescriptor.MODE_READ_ONLY,
+                handle,
+                PrivateFileDescriptors.handler
+            )
+        } catch (failure: Throwable) {
+            handle.onRelease()
+            throw failure
         }
     }
 
