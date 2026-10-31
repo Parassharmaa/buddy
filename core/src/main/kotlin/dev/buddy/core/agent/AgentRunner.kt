@@ -424,6 +424,7 @@ class AgentRunner(
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     appendUpdates()
+                    if (inbox.pauseRequested) return finish(RunState.PAUSED, "Paused by the user")
                     if (checkpoint.modelRequests >= limits.modelRequests || remaining() == 0L ||
                         (limits.tokens != null && usage() >= limits.tokens)
                     ) {
@@ -474,12 +475,13 @@ class AgentRunner(
                                     checkpoint.retryWaitMillis + wait
                             )
                         publish(RunState.RUNNING, "Waiting before a bounded model retry")
-                        delay(wait)
+                        withTimeoutOrNull(wait) { inbox.updates.receive() }
                         continue
                     }
                     val response = modelResult.reply
                     if (response == null) {
                         appendUpdates()
+                        if (inbox.pauseRequested) return finish(RunState.PAUSED, "Paused by the user")
                         publish(RunState.RUNNING, "Reading your update")
                         continue
                     }
@@ -498,6 +500,7 @@ class AgentRunner(
                     if (remaining() == 0L || (limits.tokens != null && usage() >= limits.tokens)) {
                         return finish(RunState.PARTIAL, "Run budget reached before dispatch")
                     }
+                    if (inbox.pauseRequested) return finish(RunState.PAUSED, "Paused by the user")
                     val calls = response.message.toolCalls.orEmpty()
                     if (response.message.role != "assistant" || calls.size > 16 ||
                         calls.map { it.id }.distinct().size != calls.size ||
@@ -533,6 +536,7 @@ class AgentRunner(
                     publish(RunState.RUNNING, "Validated model request")
                     for (call in calls) {
                         currentCoroutineContext().ensureActive()
+                        if (inbox.pauseRequested) return finish(RunState.PAUSED, "Paused by the user")
                         if (!inbox.canDispatch()) {
                             balancePending()
                             appendUpdates()
