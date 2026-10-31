@@ -18,6 +18,7 @@ import dev.buddy.qualification.PhoneQualificationActivity
 import dev.buddy.shell.IBuddyHelper
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -68,16 +69,18 @@ class ForegroundFixtureDeviceTest {
                 action(opened, bootstrap.helper, automation)
             }
         } finally {
-            withContext(Dispatchers.Main) { activity?.finish() }
-            if (services == "null") {
-                shell("settings delete secure enabled_accessibility_services")
-            } else {
-                shell("settings put secure enabled_accessibility_services $services")
-            }
-            if (enabled == "null") {
-                shell("settings delete secure accessibility_enabled")
-            } else {
-                shell("settings put secure accessibility_enabled $enabled")
+            withContext(NonCancellable) {
+                withContext(Dispatchers.Main) { activity?.finish() }
+                if (services == "null") {
+                    shell("settings delete secure enabled_accessibility_services")
+                } else {
+                    shell("settings put secure enabled_accessibility_services $services")
+                }
+                if (enabled == "null") {
+                    shell("settings delete secure accessibility_enabled")
+                } else {
+                    shell("settings put secure accessibility_enabled $enabled")
+                }
             }
         }
     }
