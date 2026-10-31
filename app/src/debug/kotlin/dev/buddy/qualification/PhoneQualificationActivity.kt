@@ -293,7 +293,7 @@ class PhoneQualificationActivity : ComponentActivity() {
     private suspend fun runConnectedModel(helper: IBuddyHelper, config: ModelConfig, port: LoopbackPort) {
         val socket = AtomicReference<AdbTransport?>()
         val authorization = DaemonAuthorization(applicationContext, AdbIdentity())
-        ModelClient().use { model ->
+        ModelClient(allowLoopbackHttpForTests = true).use { model ->
             ModelFixtureCheck.run(
                 applicationContext,
                 helper,

@@ -27,6 +27,7 @@ android {
         warningsAsErrors = true
     }
     buildFeatures {
+        buildConfig = true
         compose = true
         aidl = true
     }

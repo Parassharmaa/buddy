@@ -21,6 +21,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModelClientTest {
+    @Test fun ordinaryClientsRejectHttpBeforeSendingCredentialsEvenWithSavedConsent() = runBlocking {
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v1/chat/completions") { exchange ->
+            requests.incrementAndGet()
+            exchange.sendResponseHeaders(500, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            ModelClient().use { client ->
+                val failure = runCatching {
+                    client.complete(
+                        ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "synthetic-key", true),
+                        emptyList()
+                    )
+                }.exceptionOrNull()
+                assertTrue(failure is IllegalArgumentException)
+                assertEquals(0, requests.get())
+            }
+            assertTrue(runCatching { ModelEndpoint.forModel("http://192.168.1.2/v1", true) }.isFailure)
+            assertTrue(runCatching { ModelEndpoint.forModel("http://localhost/v1", true) }.isFailure)
+            assertEquals("https", ModelEndpoint.forModel("https://192.168.1.2/v1").uri.scheme)
+            assertEquals("http", ModelEndpoint.forModel("http://[::1]/v1", true).uri.scheme)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     @Test fun invalidProviderDataIsAProtocolFailureWithoutEchoingPrivateResponseText() = runBlocking {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/v1/chat/completions") { exchange ->
@@ -32,7 +61,7 @@ class ModelClientTest {
         }
         server.start()
         try {
-            ModelClient().use { client ->
+            ModelClient(allowLoopbackHttpForTests = true).use { client ->
                 val failure = runCatching {
                     client.complete(
                         ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "", true),
@@ -65,7 +94,7 @@ class ModelClientTest {
         }
         server.start()
         try {
-            ModelClient().use { client ->
+            ModelClient(allowLoopbackHttpForTests = true).use { client ->
                 val config =
                     ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "synthetic-fixture-key", true)
                 assertEquals("Tool calling and response verified", client.probe(config))
@@ -102,7 +131,7 @@ class ModelClientTest {
         }
         server.start()
         try {
-            ModelClient().use { client ->
+            ModelClient(allowLoopbackHttpForTests = true).use { client ->
                 val config = ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "", true)
                 assertEquals("Hello", client.complete(config, listOf(ChatMessage("user", "Hello"))).message.content)
                 val failure = runCatching {
@@ -134,7 +163,7 @@ class ModelClientTest {
         }
         server.start()
         try {
-            ModelClient().use { client ->
+            ModelClient(allowLoopbackHttpForTests = true).use { client ->
                 val request = async(Dispatchers.Default) {
                     client.complete(
                         ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "", true),

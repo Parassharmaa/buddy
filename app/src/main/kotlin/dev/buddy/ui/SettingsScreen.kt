@@ -35,7 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,8 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -263,7 +260,6 @@ import kotlinx.coroutines.launch
     var name by rememberSaveable(state.modelName) { mutableStateOf(state.modelName) }
     var key by remember { mutableStateOf("") }
     var showKey by remember { mutableStateOf(false) }
-    var local by rememberSaveable(state.localHttp) { mutableStateOf(state.localHttp) }
     Text("Bring your own model", style = MaterialTheme.typography.titleLarge)
     Text(
         "Use an OpenAI-compatible chat API with streaming and tool calling. Task-relevant text and screen content may go directly to this provider when those capabilities are enabled."
@@ -303,25 +299,14 @@ import kotlinx.coroutines.launch
         ),
         modifier = Modifier.fillMaxWidth()
     )
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Allow HTTP for a local-network model", Modifier.weight(1f))
-        Switch(
-            local,
-            { local = it },
-            modifier = Modifier.semantics {
-                contentDescription =
-                    "Allow HTTP for a local-network model"
-            }
-        )
-    }
     Text(
-        "HTTP is limited to explicit local IP addresses and localhost. Traffic to those endpoints is unencrypted.",
+        "Use HTTPS, including for models on your local network. Requests go directly to this provider.",
         style = MaterialTheme.typography.bodySmall
     )
     LocalNetworkAccess("Models on your Wi-Fi network require local network access.")
     Button(
         onClick = {
-            model.saveModel(base, name, key, local)
+            model.saveModel(base, name, key, false)
             key = ""
             showKey = false
         },
@@ -336,7 +321,7 @@ import kotlinx.coroutines.launch
     }
     TextButton(
         onClick = {
-            model.saveModel(base, name, key, local, saveUnverified = true)
+            model.saveModel(base, name, key, false, saveUnverified = true)
             key = ""
             showKey = false
         },

@@ -85,7 +85,7 @@ class SourceContextTest {
             val local = ModelConfig("http://127.0.0.1:${server.address.port}/v1", "fixture", "", true)
             val reference = source().copy(destination = SourceContext.destination(local))
             val messages = listOf(ChatMessage("user", "Use this", sources = listOf(reference)))
-            dev.buddy.core.model.ModelClient().use { client ->
+            dev.buddy.core.model.ModelClient(allowLoopbackHttpForTests = true).use { client ->
                 assertEquals("Fixture response", client.complete(local, messages).message.content)
                 assertEquals(1, requests.size)
                 val wire = modelJson.parseToJsonElement(requests.single()).jsonObject.getValue("messages")

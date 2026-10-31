@@ -6,6 +6,15 @@ class ModelEndpoint private constructor(val uri: URI) {
     val chatUrl: String get() = uri.toString().trimEnd('/') + "/chat/completions"
 
     companion object {
+        fun forModel(value: String, allowLoopbackHttpForTests: Boolean = false): ModelEndpoint {
+            val endpoint = parse(value, allowLoopbackHttpForTests)
+            require(
+                endpoint.uri.scheme == "https" ||
+                    endpoint.uri.host.removePrefix("[").removeSuffix("]") in setOf("127.0.0.1", "::1")
+            ) { "Model endpoints require HTTPS; test HTTP is limited to loopback" }
+            return endpoint
+        }
+
         fun parse(value: String, allowLocalHttp: Boolean = false): ModelEndpoint {
             val uri = URI(value.trim())
             require(uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank()) {

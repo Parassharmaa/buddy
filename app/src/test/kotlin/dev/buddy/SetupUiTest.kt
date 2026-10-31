@@ -34,6 +34,9 @@ class SetupUiTest {
         compose.onNodeWithText("Set up Buddy").performScrollTo().performClick()
         compose.onNodeWithText("Models").performClick()
         compose.onNodeWithText("Bring your own model").assertIsDisplayed()
+        compose.onNodeWithText(
+            "Use HTTPS, including for models on your local network. Requests go directly to this provider."
+        ).assertExists()
         compose.onNodeWithText("Buddy").assertIsDisplayed()
         compose.onNodeWithText("Save and test model").assertIsDisplayed()
         compose.onNodeWithText("Save anyway · Unverified").assertIsNotEnabled()
