@@ -89,7 +89,6 @@ internal object WindowPrivacy {
         fun initial(windows: Array<InputWindowHandle>) {
             val summary = summarize(windows, displayId, fixtureUid, sinks, monitor)
             latest.compareAndSet(null, summary)
-            if (latest.get()?.known == true) ready.countDown()
         }
         override fun onWindowInfosChanged(
             windows: Array<InputWindowHandle>,
@@ -97,7 +96,7 @@ internal object WindowPrivacy {
         ) {
             val summary = summarize(windows, displayId, fixtureUid, sinks, monitor)
             latest.set(summary)
-            if (summary.known) ready.countDown()
+            ready.countDown()
         }
     }
 
@@ -138,9 +137,8 @@ internal object WindowPrivacy {
                 val initial = listener.register()
                 registered = true
                 listener.initial(requireNotNull(initial.first))
-                // The initial snapshot can precede the owned display's first input-window update.
-                listener.ready.await(200, TimeUnit.MILLISECONDS)
-                listener.latest.get() ?: Result()
+                // register() returns a process-local cache. Never grant observation from that cache.
+                if (listener.ready.await(200, TimeUnit.MILLISECONDS)) listener.latest.get() ?: Result() else Result()
             } finally {
                 if (registered) listener.unregister()
             }

@@ -75,20 +75,26 @@ class FixtureWorkspace private constructor(
         return state
     }
 
+    private fun windowPrivacy(state: Bundle) = FixtureWindowPrivacy(
+        state.getBoolean("windowMetadataKnown"),
+        state.getBoolean("secureWindow"),
+        state.getBoolean("mixedWindowOwners"),
+        state.getInt("windowMetadataStatus", -1),
+        state.getInt("windowMetadataCount"),
+        state.getInt("windowMetadataScopedCount"),
+        (state.getIntArray("windowMetadataDisplays") ?: intArrayOf()).take(16),
+        (state.getIntArray("windowMetadataForeign") ?: intArrayOf()).take(64)
+    )
+
     private fun snapshot(): FixtureSnapshot {
         val startedGeneration = generation
-        val state = validateDisplay()
-        val privacy = FixtureWindowPrivacy(
-            state.getBoolean("windowMetadataKnown"),
-            state.getBoolean("secureWindow"),
-            state.getBoolean("mixedWindowOwners"),
-            state.getInt("windowMetadataStatus", -1),
-            state.getInt("windowMetadataCount"),
-            state.getInt("windowMetadataScopedCount"),
-            (state.getIntArray("windowMetadataDisplays") ?: intArrayOf()).take(16),
-            (state.getIntArray("windowMetadataForeign") ?: intArrayOf()).take(64)
-        )
-        val captured = FixtureScreenService.capture(scope, privacy)
+        val first = FixtureScreenService.capture(scope, windowPrivacy(validateDisplay()))
+        val after = windowPrivacy(validateDisplay())
+        val captured = if (!after.known || after.secure || after.mixed) {
+            FixtureScreenService.capture(scope, after)
+        } else {
+            first
+        }
         check(startedGeneration == generation && !handedOver && !closed.get())
         val bound = captured.copy(
             observation = captured.observation.copy(
