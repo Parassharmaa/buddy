@@ -3,6 +3,7 @@ package dev.buddy
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.Context
+import android.os.Binder
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -24,13 +25,17 @@ import dev.buddy.adb.PairingClient
 import dev.buddy.connection.BootstrapProvider
 import dev.buddy.connection.DaemonAuthorization
 import dev.buddy.core.LoopbackPort
+import dev.buddy.core.connection.ActiveLease
 import dev.buddy.qualification.AdbPortProbe
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
-import java.io.IOException
+import java.security.SecureRandom
 import java.util.regex.Pattern
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -434,40 +439,73 @@ class LocalPairingDeviceTest {
             assertEquals(ShellProtocol.SHELL_UID, connectedHelper.capabilities().getInt("helperUid"))
             enter(Stage.FRESH_TRANSPORT_AUTHORIZATION_PROOF)
             val previousProof = connectedHelper.capabilities().getLong("authorizationDeadline")
-            var proofTransport: AdbTransport? = null
-            try {
-                val deadline = DaemonAuthorization(context, identity).refresh(
-                    connectedHelper,
-                    LoopbackPort(connectPort),
-                    onOpen = { proofTransport = it },
-                    onClose = { if (proofTransport === it) proofTransport = null }
-                )
-                check(deadline > previousProof)
+            val owner = Binder()
+            val leaseChallenge = ByteArray(32).also(SecureRandom()::nextBytes)
+            val acquired = try {
+                connectedHelper.acquireLease(owner, leaseChallenge)
             } finally {
-                proofTransport?.close()
+                leaseChallenge.fill(0)
             }
-            enter(Stage.WIRELESS_DEBUGGING_REVOCATION)
-            val lastProof = connectedHelper.capabilities().getLong("authorizationDeadline")
-            check(lastProof > SystemClock.elapsedRealtime())
-            shell("settings put global adb_wifi_enabled 0")
-            check(shell("settings get global adb_wifi_enabled") == "0")
-            withTimeout(10_000) {
-                while (true) {
-                    val rejected = withContext(Dispatchers.IO) {
-                        AdbTransport(identity, timeoutMs = 5_000).use { fresh ->
-                            try {
-                                fresh.connect(LoopbackPort(connectPort))
-                                false
-                            } catch (_: IOException) {
-                                true
-                            }
-                        }
+            val leaseId = requireNotNull(acquired.getString("lease"))
+            var proofTransport: AdbTransport? = null
+            var proofs = 0
+            val stopped = CompletableDeferred<Exception>()
+            val lease = ActiveLease(
+                acquired.getLong("deadline"),
+                SystemClock::elapsedRealtime,
+                refreshAuthorization = {
+                    DaemonAuthorization(context, identity).refresh(
+                        connectedHelper,
+                        LoopbackPort(connectPort),
+                        onOpen = { proofTransport = it },
+                        onClose = { if (proofTransport === it) proofTransport = null }
+                    ).also { proofs++ }
+                },
+                renewLease = {
+                    val challenge = ByteArray(32).also(SecureRandom()::nextBytes)
+                    val startedAt = SystemClock.elapsedRealtime()
+                    try {
+                        connectedHelper.renewLease(leaseId, challenge)
+                    } finally {
+                        challenge.fill(0)
                     }
-                    if (rejected) break
-                    delay(100)
+                    startedAt + ShellProtocol.LEASE_MS
+                },
+                release = { connectedHelper.releaseLease(leaseId) }
+            )
+            val maintenance = launch {
+                try {
+                    lease.maintain()
+                } catch (failure: Exception) {
+                    stopped.complete(failure)
                 }
             }
-            check(connectedHelper.capabilities().getLong("authorizationDeadline") == lastProof)
+            try {
+                withTimeout(20_000) {
+                    while (proofs == 0 || lease.deadline <= acquired.getLong("deadline")) {
+                        check(!stopped.isCompleted) { "Active authorization proof failed" }
+                        delay(50)
+                    }
+                }
+                val lastProof = connectedHelper.capabilities().getLong("authorizationDeadline")
+                check(lastProof > previousProof && lease.isCurrent)
+                enter(Stage.WIRELESS_DEBUGGING_REVOCATION)
+                shell("settings put global adb_wifi_enabled 0")
+                check(shell("settings get global adb_wifi_enabled") == "0")
+                withTimeout(25_000) { stopped.await() }
+                check(!lease.isCurrent)
+                check(connectedHelper.capabilities().getLong("authorizationDeadline") == lastProof)
+                val rejectedChallenge = ByteArray(32).also(SecureRandom()::nextBytes)
+                try {
+                    check(runCatching { connectedHelper.renewLease(leaseId, rejectedChallenge) }.isFailure)
+                } finally {
+                    rejectedChallenge.fill(0)
+                }
+            } finally {
+                proofTransport?.close()
+                maintenance.cancelAndJoin()
+                runCatching { connectedHelper.releaseLease(leaseId) }
+            }
         } catch (failure: Exception) {
             val enabled = runCatching { shell("settings get global adb_wifi_enabled") == "1" }.getOrNull()
             val tls = runCatching { shell("getprop persist.adb.tls_server.enable") == "1" }.getOrNull()
