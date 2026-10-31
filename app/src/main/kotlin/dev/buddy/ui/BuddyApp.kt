@@ -122,7 +122,8 @@ private enum class Destination(val label: String) {
                             state,
                             { destination = Destination.SETTINGS },
                             model::draft,
-                            model.memory::remember
+                            model.memory::remember,
+                            { workspace, index -> model.saveResponse(workspace, index) }
                         ) {
                             FilesPanel(state, model)
                             SourcePanel(state, model.sources)

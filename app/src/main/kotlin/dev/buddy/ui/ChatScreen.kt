@@ -37,6 +37,7 @@ import dev.buddy.BuddyState
     settings: () -> Unit,
     draft: (String) -> Unit,
     rememberMessage: (Int) -> Unit = {},
+    saveResponse: (String, Int) -> Unit = { _, _ -> },
     files: @Composable () -> Unit = {}
 ) {
     LazyColumn(
@@ -154,6 +155,15 @@ import dev.buddy.BuddyState
                             "Reference: ${source.label}${if (source.truncated) " (excerpt)" else ""}",
                             style = MaterialTheme.typography.bodySmall
                         )
+                    }
+                    if (message.role == "assistant" && !message.content.isNullOrBlank()) {
+                        val saved = state.artifacts.any {
+                            it.workspace == state.conversation.id && it.responseIndex == indexed.index
+                        }
+                        TextButton(
+                            onClick = { saveResponse(state.conversation.id, indexed.index) },
+                            enabled = state.loaded && !state.active && !state.importing && !state.exporting && !saved
+                        ) { Text(if (saved) "Saved to files" else "Save to files") }
                     }
                     if (message.role == "user") {
                         TextButton(onClick = {

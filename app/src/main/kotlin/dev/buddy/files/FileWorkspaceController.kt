@@ -6,6 +6,7 @@ import dev.buddy.BuddyState
 import dev.buddy.browser.DownloadedFile
 import dev.buddy.core.Conversation
 import dev.buddy.core.ConversationExports
+import dev.buddy.core.ResponseFiles
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.EncryptedStore
 import kotlinx.coroutines.CancellationException
@@ -68,42 +69,76 @@ internal class FileWorkspaceController(
         file.origin.toUri() to SelectedDocument(file.name, file.mimeType, file.bytes)
     }
 
-    private fun importSelected(read: suspend () -> Pair<Uri, SelectedDocument>): Boolean {
+    fun saveResponse(expectedWorkspace: String, index: Int): Boolean {
+        if (!mayStart()) return false
+        val conversation = _state.value.conversation
+        val message = conversation.messages.getOrNull(index)
+        if (conversation.id != expectedWorkspace || message?.role != "assistant" || message.content.isNullOrBlank()) {
+            fileError("That response is no longer available. Open its conversation again.")
+            return false
+        }
+        if (_state.value.artifacts.any { it.workspace == conversation.id && it.responseIndex == index }) return false
+        val content = requireNotNull(message.content)
+        return importSelected(
+            responseIndex = index,
+            failureMessage = "The response could not be saved. Check available space and the 8 MiB text limit."
+        ) {
+            val context = currentCoroutineContext()
+            val bytes = ResponseFiles.encode(content) { context.isActive }
+            "content://dev.buddy.generated/response/${conversation.id}/$index".toUri() to
+                SelectedDocument("Buddy response.txt", "text/plain", bytes)
+        }
+    }
+
+    private fun importSelected(
+        responseIndex: Int? = null,
+        failureMessage: String = "This file could not be imported. Check its type and available space. " +
+            "Files can be up to 8 MiB; JSON up to 256 KiB.",
+        read: suspend () -> Pair<Uri, SelectedDocument>
+    ): Boolean {
         if (!mayStart()) return false
         val conversation = _state.value.conversation
         _state.update { it.copy(importing = true, error = null) }
         fileJob = scope.launch {
             try {
-                val (uri, selected) = read()
-                try {
-                    val saved = conversation.copy(
-                        title = if (conversation.messages.isEmpty()) "Files" else conversation.title
-                    )
-                    persistence.withLock {
-                        store.put("conversation:${saved.id}", "conversation", json.encodeToString(saved))
-                    }
-                    store.artifacts.importFile(saved.id, selected.name, selected.mimeType, uri, selected.bytes)
-                    val files = store.artifacts.list(saved.id)
-                    currentCoroutineContext().ensureActive()
-                    _state.update {
-                        if (it.conversation.id ==
-                            saved.id
-                        ) {
-                            it.copy(conversation = saved, artifacts = files)
-                        } else {
-                            it
+                withContext(Dispatchers.IO) {
+                    val (uri, selected) = read()
+                    try {
+                        val saved = conversation.copy(
+                            title = if (conversation.messages.isEmpty()) "Files" else conversation.title
+                        )
+                        persistence.withLock {
+                            store.put("conversation:${saved.id}", "conversation", json.encodeToString(saved))
                         }
+                        store.artifacts.importFile(
+                            saved.id,
+                            selected.name,
+                            selected.mimeType,
+                            uri,
+                            selected.bytes,
+                            responseIndex = responseIndex
+                        )
+                        val files = store.artifacts.list(saved.id)
+                        currentCoroutineContext().ensureActive()
+                        _state.update {
+                            if (it.conversation.id ==
+                                saved.id
+                            ) {
+                                it.copy(conversation = saved, artifacts = files)
+                            } else {
+                                it
+                            }
+                        }
+                    } finally {
+                        selected.bytes.fill(0)
                     }
-                } finally {
-                    selected.bytes.fill(0)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 _state.update {
                     it.copy(
-                        error = "This file could not be imported. Check its type and available space. " +
-                            "Files can be up to 8 MiB; JSON up to 256 KiB."
+                        error = failureMessage
                     )
                 }
             } finally {

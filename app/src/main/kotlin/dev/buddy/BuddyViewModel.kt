@@ -498,6 +498,7 @@ class BuddyViewModel(
         }
     }
     fun exportConversation(expectedId: String, uri: Uri) = files.exportConversation(expectedId, uri)
+    fun saveResponse(workspace: String, index: Int) = files.saveResponse(workspace, index)
     fun importDocument(uri: Uri) = files.importDocument(uri)
     fun setMemoryEnabled(enabled: Boolean) {
         if (!enabled) sources.removeMemories()
@@ -513,7 +514,9 @@ class BuddyViewModel(
     }
     fun downloadFile(id: String) {
         val admitted = files.importDownload {
-            val grant = browser.approveDownload(id) ?: error("Download approval expired")
+            val grant = withContext(Dispatchers.Main.immediate) {
+                browser.approveDownload(id) ?: error("Download approval expired")
+            }
             downloader.fetch(grant)
         }
         if (!admitted) files.fileError("Files are busy. Finish or cancel the current file operation first.")

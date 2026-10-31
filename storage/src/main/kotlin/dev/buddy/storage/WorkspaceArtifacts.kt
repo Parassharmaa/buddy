@@ -33,7 +33,8 @@ data class WorkspaceArtifact(
     val mimeType: String,
     val bytes: Int,
     val sourceUri: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val responseIndex: Int? = null
 ) {
     override fun toString(): String = "WorkspaceArtifact(redacted)"
 }
@@ -109,6 +110,10 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
             dev.buddy.core.WorkspaceFileTypes.extensions(artifact.mimeType) ?: error("Unsupported file type")
         require(artifact.displayName.substringAfterLast('.', "").lowercase() in extensions)
         require(artifact.sourceUri.length in 1..2048)
+        artifact.responseIndex?.let { index ->
+            require(index >= 0 && artifact.mimeType == "text/plain")
+            require(artifact.sourceUri == "content://dev.buddy.generated/response/${artifact.workspace}/$index")
+        }
         if (Uri.parse(artifact.sourceUri).scheme != "content") {
             val provenance = java.net.URI(artifact.sourceUri)
             require(
@@ -135,7 +140,8 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
         displayName: String,
         mimeType: String,
         source: Uri,
-        bytes: ByteArray
+        bytes: ByteArray,
+        responseIndex: Int? = null
     ): WorkspaceArtifact = withContext(Dispatchers.IO) {
         operations.withLock {
             val artifact = WorkspaceArtifact(
@@ -145,7 +151,8 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
                 mimeType,
                 bytes.size,
                 source.toString(),
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                responseIndex
             )
             validate(artifact)
             check(records.get("conversation:$workspace") != null) { "Conversation unavailable" }
