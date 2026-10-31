@@ -24,7 +24,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class HelperLockDeviceTest {
     @Test(timeout = 45_000)
-    fun screenOffRejectsObservationInputAndTakeoverUntilTheUserReturns() = runBlocking {
+    fun screenOffRejectsObservationInputAndTakeoverUntilTheUserReturns() = runBlocking<Unit> {
         assumeTrue(
             InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
                 Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone")
