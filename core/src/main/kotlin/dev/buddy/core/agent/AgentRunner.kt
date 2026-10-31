@@ -125,7 +125,7 @@ class AgentRunner(
         require(request.request.isNotBlank() && request.request.length <= 8192)
         require(
             history.all {
-                it.role in setOf("user", "assistant") && it.toolCalls.isNullOrEmpty() &&
+                it.role in setOf("user", "assistant") && it.sources.isEmpty() && it.toolCalls.isNullOrEmpty() &&
                     it.toolCallId == null
             }
         )

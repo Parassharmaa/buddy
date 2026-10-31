@@ -5,6 +5,7 @@ import dev.buddy.core.ModelConfig
 import dev.buddy.core.ModelEndpoint
 import dev.buddy.core.ModelFailure
 import dev.buddy.core.ModelReply
+import dev.buddy.core.SourceContext
 import dev.buddy.core.StreamingReply
 import dev.buddy.core.modelJson
 import java.io.FilterInputStream
@@ -49,7 +50,13 @@ class ModelClient :
         val endpoint = ModelEndpoint.parse(config.baseUrl, config.localHttp)
         val body = buildJsonObject {
             put("model", config.model)
-            put("messages", json.encodeToJsonElement(ListSerializer(ChatMessage.serializer()), messages))
+            put(
+                "messages",
+                json.encodeToJsonElement(
+                    ListSerializer(ChatMessage.serializer()),
+                    SourceContext.wireMessages(messages, config)
+                )
+            )
             put("stream", true)
             put("stream_options", buildJsonObject { put("include_usage", true) })
             if (tools.isNotEmpty()) put("tools", JsonArray(tools))

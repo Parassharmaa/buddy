@@ -47,7 +47,8 @@ import dev.buddy.browser.WebReadStatus
 import dev.buddy.browser.WebStatus
 import dev.buddy.storage.WorkspaceArtifact
 
-@Composable internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceArtifact>) {
+@Composable
+internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceArtifact>, useWithModel: () -> Unit) {
     val state by controller.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var address by remember { mutableStateOf(state.web.address) }
@@ -93,6 +94,10 @@ import dev.buddy.storage.WorkspaceArtifact
             )
         }
         FlowRow {
+            TextButton(
+                onClick = useWithModel,
+                enabled = state.web.canRead && state.web.status == WebStatus.READY
+            ) { Text("Use with model") }
             TextButton(
                 onClick = controller::read,
                 enabled =

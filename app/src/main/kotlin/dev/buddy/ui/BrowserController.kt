@@ -155,6 +155,11 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     fun dismissError() {
         _state.update { it.copy(error = null) }
     }
+    suspend fun source(): WebReadResult {
+        val current = session ?: error("No page")
+        val origin = WebAddress.parse(current.state.value.address).origin
+        return current.observe(origin)
+    }
     fun read() {
         val current = session ?: return
         if (_state.value.reading) return
