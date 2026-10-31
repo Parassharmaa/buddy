@@ -17,6 +17,7 @@ android {
     }
 }
 dependencies {
+    implementation(project(":core"))
     implementation(libs.webkit)
     implementation(libs.okhttp)
     implementation(libs.coroutines.android)

@@ -76,6 +76,25 @@ class WorkspaceArtifactsDeviceTest {
                 rejected("deep.json", "application/json", ("[".repeat(40) + "0" + "]".repeat(40)).toByteArray())
                 rejected("empty.txt", "text/plain", byteArrayOf())
                 rejected("large.txt", "text/plain", ByteArray(WorkspaceArtifacts.MAX_FILE_BYTES + 1) { 65 })
+                for (provenance in listOf(
+                    "https://site.example/path",
+                    "https://site.example?token=private",
+                    "https://name:secret@site.example",
+                    "file:///private/path",
+                    "https://site.example/#fragment"
+                )) {
+                    assertTrue(
+                        runCatching {
+                            store.artifacts.importFile(
+                                workspace,
+                                "notes.txt",
+                                "text/plain",
+                                Uri.parse(provenance),
+                                byteArrayOf(65)
+                            )
+                        }.isFailure
+                    )
+                }
                 val bytes = ByteArray(WorkspaceArtifacts.MAX_FILE_BYTES) { 65 }
                 repeat(4) { store.artifacts.importFile(workspace, "notes.txt", "text/plain", SOURCE, bytes) }
                 rejected("extra.txt", "text/plain", byteArrayOf(65))

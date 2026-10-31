@@ -48,7 +48,15 @@ import dev.buddy.browser.WebStatus
 import dev.buddy.storage.WorkspaceArtifact
 
 @Composable
-internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceArtifact>, useWithModel: () -> Unit) {
+internal fun BrowserScreen(
+    controller: BrowserController,
+    files: List<WorkspaceArtifact>,
+    useWithModel: () -> Unit,
+    download: (String) -> Unit,
+    fileBusy: Boolean,
+    taskActive: Boolean,
+    cancelFile: () -> Unit
+) {
     val state by controller.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var address by remember { mutableStateOf(state.web.address) }
@@ -70,6 +78,10 @@ internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceA
     }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Heading("Browser")
+        if (fileBusy) {
+            Text("Updating conversation files…")
+            TextButton(onClick = cancelFile) { Text("Cancel file operation") }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 address,
@@ -96,7 +108,7 @@ internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceA
         FlowRow {
             TextButton(
                 onClick = useWithModel,
-                enabled = state.web.canRead && state.web.status == WebStatus.READY
+                enabled = !taskActive && !fileBusy && state.web.canRead && state.web.status == WebStatus.READY
             ) { Text("Use with model") }
             TextButton(
                 onClick = controller::read,
@@ -177,6 +189,26 @@ internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceA
                 "Open a website without pairing your phone. Read page creates a local text preview; it does not send page contents to your model."
             )
         }
+    }
+    state.web.download?.let { request ->
+        AlertDialog(
+            onDismissRequest = controller::cancelDownload,
+            title = { Text("Save this download?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(request.address.sourceLabel, maxLines = 3)
+                    Text(
+                        "Save a copy in this conversation, using this website's cookies. " +
+                            "Supported text, images and PDFs are limited to 8 MiB."
+                    )
+                    if (taskActive) Text("Wait for the current response to finish before saving this file.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { download(request.id) }, enabled = !fileBusy && !taskActive) { Text("Save file") }
+            },
+            dismissButton = { TextButton(onClick = controller::cancelDownload) { Text("Cancel") } }
+        )
     }
     if (state.web.hasUploadRequest) {
         val accepts = controller.acceptedUploadTypes().flatMap { it.split(',') }.map { it.trim().lowercase() }

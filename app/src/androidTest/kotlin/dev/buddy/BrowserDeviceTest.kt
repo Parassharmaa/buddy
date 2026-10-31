@@ -3,12 +3,14 @@ package dev.buddy
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.buddy.browser.BrowserDownloader
 import dev.buddy.browser.PrivateWebHost
 import dev.buddy.browser.WebAddress
 import dev.buddy.browser.WebReadResult
 import dev.buddy.browser.WebReadStatus
 import dev.buddy.browser.WebStatus
 import dev.buddy.qualification.BrowserFixtureActivity
+import dev.buddy.storage.ArtifactReadBudget
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.Executors
@@ -30,6 +32,8 @@ class BrowserDeviceTest {
         private val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         private val worker = Executors.newSingleThreadExecutor()
         val origin = "http://127.0.0.1:${socket.localPort}"
+        val downloads = java.util.concurrent.atomic.AtomicInteger()
+        val authenticatedDownloads = java.util.concurrent.atomic.AtomicInteger()
         init {
             worker.submit {
                 while (!socket.isClosed) {
@@ -39,11 +43,17 @@ class BrowserDeviceTest {
                             val reader = client.getInputStream().bufferedReader()
                             val path = reader.readLine().orEmpty().split(' ').getOrNull(1).orEmpty()
                             var length = 0
+                            var cookie = false
                             while (true) {
                                 val line = reader.readLine() ?: break
                                 if (line.isEmpty()) break
                                 length += line.length
                                 check(length < 8192)
+                                if (line.startsWith("Cookie:", true) &&
+                                    line.contains("buddy_fixture=present")
+                                ) {
+                                    cookie = true
+                                }
                             }
                             val content = when (path.substringBefore('?')) {
                                 "/private" ->
@@ -58,14 +68,30 @@ class BrowserDeviceTest {
 
                                 else -> "<p>Original public text</p><p style='display:none'>Hidden text</p>"
                             }
-                            val bytes = (
-                                "<!doctype html><html><head><title>Fixture page</title></head><body>" +
-                                    content + "</body></html>"
-                                ).toByteArray()
+                            val document = path.substringBefore('?') == "/download"
+                            if (document) {
+                                downloads.incrementAndGet()
+                                if (cookie) authenticatedDownloads.incrementAndGet()
+                            }
+                            val bytes = if (document) {
+                                "%PDF-1.7 Synthetic browser download".toByteArray()
+                            } else {
+                                (
+                                    "<!doctype html><html><head><title>Fixture page</title></head><body>" +
+                                        content + "</body></html>"
+                                    ).toByteArray()
+                            }
                             client.getOutputStream().apply {
                                 write(
                                     (
-                                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" +
+                                        "HTTP/1.1 200 OK\r\n" +
+                                            (
+                                                if (document) {
+                                                    "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=fixture.pdf\r\n"
+                                                } else {
+                                                    "Content-Type: text/html; charset=utf-8\r\nSet-Cookie: buddy_fixture=present; Path=/; SameSite=Lax\r\n"
+                                                }
+                                                ) +
                                             "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
                                         ).toByteArray()
                                 )
@@ -228,6 +254,71 @@ class BrowserDeviceTest {
                 withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
                 assertTrue(activity.session.observe(other.origin) is WebReadResult.Allowed)
                 assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
+            }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun downloadApprovalIsCancelledOnPauseAndApprovedBytesEnterTheEncryptedWorkspace() = runBlocking {
+        org.junit.Assume.assumeTrue(
+            InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
+                android.os.Build.HARDWARE == "ranchu" && android.os.Build.FINGERPRINT.contains("sdk_gphone")
+        )
+        withBrowser { activity, pages ->
+            val store = (activity.application as BuddyApplication).store
+            store.clear()
+            try {
+                suspend fun request(): dev.buddy.browser.WebDownloadRequest {
+                    assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+                    withContext(Dispatchers.Main) {
+                        val root = activity.findViewById<android.view.View>(
+                            android.R.id.content
+                        ) as android.view.ViewGroup
+                        (root.getChildAt(0) as android.webkit.WebView)
+                            .evaluateJavascript("location.href='${pages.origin}/download?token=synthetic'", null)
+                    }
+                    return requireNotNull(
+                        withTimeout(10_000) {
+                            activity.session.state.first { it.download != null }
+                        }.download
+                    )
+                }
+                val stale = request()
+                assertEquals(1, pages.downloads.get())
+                withContext(Dispatchers.Main) {
+                    activity.session.detach()
+                    assertEquals(null, activity.session.approveDownload(stale.id))
+                    activity.session.resume()
+                }
+                val current = request()
+                assertEquals(2, pages.downloads.get())
+                val grant =
+                    withContext(Dispatchers.Main) { requireNotNull(activity.session.approveDownload(current.id)) }
+                BrowserDownloader().use { downloader ->
+                    val file = downloader.fetch(grant)
+                    try {
+                        assertEquals(3, pages.downloads.get())
+                        assertEquals(3, pages.authenticatedDownloads.get())
+                        val workspace = java.util.UUID.randomUUID().toString()
+                        store.put("conversation:$workspace", "conversation", "fixture")
+                        val imported = store.artifacts.importFile(
+                            workspace,
+                            file.name,
+                            file.mimeType,
+                            android.net.Uri.parse(file.origin),
+                            file.bytes
+                        )
+                        assertEquals(pages.origin, imported.sourceUri)
+                        org.junit.Assert.assertArrayEquals(
+                            file.bytes,
+                            store.artifacts.read(workspace, imported.id, ArtifactReadBudget())
+                        )
+                    } finally {
+                        file.bytes.fill(0)
+                    }
+                }
+            } finally {
+                store.clear()
             }
         }
     }
