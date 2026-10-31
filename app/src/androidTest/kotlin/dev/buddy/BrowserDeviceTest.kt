@@ -64,8 +64,7 @@ class BrowserDeviceTest {
                             }
                             val content = when (path.substringBefore('?')) {
                                 "/upload" ->
-                                    "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
-                                        "<button id='pick' style='width:240px;height:80px' " +
+                                    "<button id='pick' style='width:240px;height:80px' " +
                                         "onclick=\"window.fixtureClicks=(window.fixtureClicks||0)+1;" +
                                         "document.getElementById('upload').click()\">" +
                                         "Choose synthetic file</button>" +
@@ -98,7 +97,9 @@ class BrowserDeviceTest {
                                 "%PDF-1.7 Synthetic browser download".toByteArray()
                             } else {
                                 (
-                                    "<!doctype html><html><head><title>Fixture page</title></head><body>" +
+                                    "<!doctype html><html><head>" +
+                                        "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                                        "<title>Fixture page</title></head><body>" +
                                         content + "</body></html>"
                                     ).toByteArray()
                             }
@@ -425,7 +426,6 @@ class BrowserDeviceTest {
                     root.getChildAt(0) as android.webkit.WebView
                 }
                 var stage = "FIRST_CHOOSER"
-                var expectedClicks = 0
                 suspend fun choose() {
                     withContext(Dispatchers.Main) {
                         withTimeout(2_000) {
@@ -459,6 +459,21 @@ class BrowserDeviceTest {
                     val bounds = button.visibleBounds
                     withContext(Dispatchers.Main) {
                         val position = IntArray(2).also(view::getLocationOnScreen)
+                        val metrics = activity.windowManager.currentWindowMetrics
+                        val bars = metrics.windowInsets.getInsets(
+                            android.view.WindowInsets.Type.systemBars() or
+                                android.view.WindowInsets.Type.displayCutout()
+                        )
+                        val safe = android.graphics.Rect(metrics.bounds).apply {
+                            left += bars.left
+                            top += bars.top
+                            right -= bars.right
+                            bottom -= bars.bottom
+                        }
+                        assertTrue(
+                            "Upload fixture button overlaps system UI",
+                            safe.contains(bounds.centerX(), bounds.centerY())
+                        )
                         assertTrue(bounds.width() > 0 && bounds.height() > 0)
                         assertTrue(
                             android.graphics.Rect(
@@ -470,14 +485,6 @@ class BrowserDeviceTest {
                         )
                     }
                     button.click()
-                    expectedClicks++
-                    try {
-                        withTimeout(2_000) {
-                            while (script(view, "window.fixtureClicks||0") != expectedClicks.toString()) delay(20)
-                        }
-                    } catch (failure: Exception) {
-                        throw AssertionError("Upload fixture did not receive the gesture at $stage", failure)
-                    }
                     try {
                         withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
                     } catch (failure: Exception) {
@@ -487,6 +494,10 @@ class BrowserDeviceTest {
                 choose()
                 withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(unapproved)) }
                 withTimeout(2_000) { activity.session.state.first { !it.hasUploadRequest } }
+                assertEquals(
+                    1,
+                    Json.parseToJsonElement(script(view, "window.fixtureClicks||0")).jsonPrimitive.content.toInt()
+                )
                 stage = "SECOND_CHOOSER"
                 choose()
                 val uri = android.net.Uri.Builder().scheme("content").authority(activity.packageName + ".artifacts")
@@ -510,6 +521,10 @@ class BrowserDeviceTest {
                 } catch (failure: Exception) {
                     throw AssertionError("Approved upload did not produce readable fixture bytes", failure)
                 }
+                assertEquals(
+                    2,
+                    Json.parseToJsonElement(script(view, "window.fixtureClicks||0")).jsonPrimitive.content.toInt()
+                )
                 assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), activity.session.observe(pages.origin))
             } finally {
                 outside?.let { resolver.delete(it, null, null) }
