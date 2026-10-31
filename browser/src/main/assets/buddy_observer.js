@@ -44,6 +44,16 @@
     const bounds = rect(element);
     return width(bounds) > 0 && height(bounds) > 0;
   }
+  function classHas(text, wanted) {
+    let start = 0;
+    for (let end = 0; end <= text.length; ++end) {
+      if (end === text.length || charAt(text, end) <= 32) {
+        if (slice(text, start, end) === wanted) return true;
+        start = end + 1;
+      }
+    }
+    return false;
+  }
   function observe() {
     if (visibility(doc) !== 'visible') return '{"status":"unsupported"}';
     const elements = all(doc, '*');
@@ -54,6 +64,14 @@
       const tag = name(element);
       if (index(tag, '-') >= 0) return '{"status":"unsupported"}';
       if (!visible(element)) continue;
+      const rawId = attr(element, 'id') || '';
+      const rawClasses = attr(element, 'class') || '';
+      if (rawId.length > 256 || rawClasses.length > 4096) return '{"status":"unsupported"}';
+      const id = lower(rawId);
+      const classes = lower(rawClasses);
+      if (id === 'captcha' || id === 'recaptcha' || id === 'hcaptcha' ||
+          classHas(classes, 'g-recaptcha') || classHas(classes, 'h-captcha') ||
+          classHas(classes, 'cf-turnstile')) return '{"status":"human"}';
       if (has(complex, tag)) return '{"status":"unsupported"}';
       const editable = attr(element, 'contenteditable');
       if (tag === 'textarea' || (editable !== null && lower(editable) !== 'false')) return '{"status":"private"}';

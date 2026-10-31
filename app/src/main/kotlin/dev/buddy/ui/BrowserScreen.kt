@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.buddy.browser.WebInterruption
 import dev.buddy.browser.WebReadResult
 import dev.buddy.browser.WebReadStatus
 import dev.buddy.browser.WebStatus
@@ -113,7 +114,14 @@ internal fun BrowserScreen(
             TextButton(
                 onClick = controller::read,
                 enabled =
-                    state.web.status == WebStatus.READY && state.web.canRead && !state.reading
+                    (
+                        state.web.status == WebStatus.READY ||
+                            (
+                                state.web.status == WebStatus.HUMAN_REQUIRED &&
+                                    state.web.interruption == WebInterruption.VERIFICATION
+                                )
+                        ) && state.web.canRead &&
+                        !state.reading
             ) {
                 Text(if (state.reading) "Reading page…" else "Read page")
             }
@@ -123,6 +131,19 @@ internal fun BrowserScreen(
             TextButton(onClick = controller::close, enabled = state.hasSession) { Text("Close page") }
         }
         if (state.web.status == WebStatus.LOADING) LinearProgressIndicator(Modifier.fillMaxWidth())
+        state.web.interruption?.let { reason ->
+            val message = when (reason) {
+                WebInterruption.SIGN_IN -> "This website needs you to sign in."
+                WebInterruption.ACCESS_DENIED -> "This website denied access."
+                WebInterruption.RATE_LIMIT -> "This website asked Buddy to slow down. Wait before opening it again."
+                WebInterruption.VERIFICATION -> "This website needs human verification."
+            }
+            Text(message)
+            Text(
+                "Continue in the browser below. Open the page again after signing in or waiting; " +
+                    "after verification, use Read page for a fresh check."
+            )
+        }
         if (state.web.pendingOrigin != null) {
             Card {
                 Column(Modifier.padding(12.dp)) {
