@@ -301,13 +301,19 @@ class LocalPairingDeviceTest {
                     }
                     val controls = nodes()
                     val text = controls.mapNotNull { it.text?.toString() }
-                    val pairingCode = text.firstOrNull {
+                    val codeField = controls.firstOrNull {
+                        it.viewIdResourceName == "com.android.settings:id/pairing_code" && it.isVisibleToUser
+                    }
+                    val addressField = controls.firstOrNull {
+                        it.viewIdResourceName == "com.android.settings:id/ip_addr" && it.isVisibleToUser
+                    }
+                    val pairingCode = codeField?.text?.toString()?.takeIf {
                         it.matches(Regex("[0-9]{3}[\\s\\u00a0\\u202f]?[0-9]{3}"))
                     }
-                    val port = text.firstNotNullOfOrNull(::portIn)
+                    val port = addressField?.text?.toString()?.let(::portIn)
                     pairingCodeSeen = pairingCodeSeen || pairingCode != null
                     pairingPortSeen = pairingPortSeen || port != null
-                    val dialogVisible = text.any { it.contains("Wi-Fi pairing code", ignoreCase = true) }
+                    val dialogVisible = codeField != null || addressField != null
                     pairingDialogSeen = pairingDialogSeen || dialogVisible
                     if (!dialogVisible && text.any { it.contains("Use wireless debugging", ignoreCase = true) }) {
                         controls.firstOrNull {
