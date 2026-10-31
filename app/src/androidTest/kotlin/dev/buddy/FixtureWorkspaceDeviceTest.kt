@@ -15,10 +15,10 @@ import dev.buddy.core.ExecutionResult
 import dev.buddy.core.Observation
 import dev.buddy.phone.FixtureScreenService
 import dev.buddy.phone.FixtureWorkspace
-import dev.buddy.storage.EncryptedStore
 import dev.buddy.shell.IBuddyHelper
-import java.util.concurrent.atomic.AtomicInteger
+import dev.buddy.storage.EncryptedStore
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -89,7 +89,9 @@ class FixtureWorkspaceDeviceTest {
                                         putBoolean("windowMetadataKnown", false)
                                         putInt("windowMetadataStatus", 6)
                                     }
-                                } else current
+                                } else {
+                                    current
+                                }
                             }
                         }
                         val workspace = FixtureWorkspace.open(
