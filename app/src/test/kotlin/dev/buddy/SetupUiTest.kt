@@ -4,8 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -51,13 +53,22 @@ class SetupUiTest {
         compose.onNodeWithText("Not connected").assertIsDisplayed()
         screenshot("04-phone-setup")
         compose.onNodeWithText("Back to settings").performClick()
-        compose.onNodeWithText("Diagnostics").performClick()
+        compose.onNodeWithText("Diagnostics").performScrollTo().performClick()
         compose.onNodeWithText("Diagnostics").assertIsDisplayed()
         screenshot("05-diagnostics")
         compose.onNodeWithText("Back to settings").performScrollTo().performClick()
         compose.onNodeWithText("Memory").performScrollTo().performClick()
         compose.onNodeWithText("Save preferences").assertIsDisplayed().assertIsOff()
         screenshot("07-memory")
+        compose.onNodeWithText("Back to settings").performScrollTo().performClick()
+        compose.onNodeWithText("App guides").performScrollTo().performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Matches your installed version").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Matches your installed version").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Use with model").performScrollTo().assertIsNotEnabled()
+        screenshot("11-app-guide")
+        compose.onNodeWithText("Back to settings").performScrollTo().performClick()
         compose.onNodeWithText("Browser").performClick()
         compose.onNodeWithText("Website address").assertIsDisplayed()
         screenshot("06-browser")

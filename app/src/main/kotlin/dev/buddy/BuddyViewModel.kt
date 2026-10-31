@@ -81,7 +81,15 @@ class BuddyViewModel(
     internal val browser = BrowserController(browserContext, viewModelScope)
     private val pdf = browserContext?.let { dev.buddy.pdf.PdfSourceReader(it, store) }
     internal val sources =
-        SourceController(store, viewModelScope, _state, { config }, browser::source, pdf?.let { it::read })
+        SourceController(
+            store,
+            viewModelScope,
+            _state,
+            { config },
+            browser::source,
+            readPdf = pdf?.let { it::read },
+            readGuide = browserContext?.let { context -> { dev.buddy.guides.InstalledAppGuides.current(context) } }
+        )
     internal val memory = MemoryController(store.memories, _state, viewModelScope)
     internal val schedules = dev.buddy.scheduling.ScheduleController(
         store.schedules,

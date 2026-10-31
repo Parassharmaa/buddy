@@ -7,7 +7,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 @Serializable
-enum class ChatSourceKind { FILE, PAGE, MEMORY }
+enum class ChatSourceKind { FILE, PAGE, MEMORY, GUIDE }
 
 /** Immutable local copy approved for a single provider/model destination. */
 @Serializable

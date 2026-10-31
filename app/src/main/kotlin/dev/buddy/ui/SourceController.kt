@@ -33,7 +33,8 @@ internal class SourceController(
     private val buddy: MutableStateFlow<BuddyState>,
     private val config: () -> ModelConfig?,
     private val readPage: suspend () -> WebReadResult,
-    private val readPdf: (suspend (String, String) -> dev.buddy.pdf.PdfExcerpt)? = null
+    private val readPdf: (suspend (String, String) -> dev.buddy.pdf.PdfExcerpt)? = null,
+    private val readGuide: (suspend () -> dev.buddy.core.guides.GuideLookup)? = null
 ) {
     private val _state = MutableStateFlow(SourcePanelState())
     val state = _state.asStateFlow()
@@ -121,6 +122,11 @@ internal class SourceController(
             snapshot.truncated,
             selected
         )
+    }
+    fun guide(id: String) = prepare { selected ->
+        val available = requireNotNull(readGuide?.invoke() as? dev.buddy.core.guides.GuideLookup.Available)
+        require(available.guide.id == id)
+        source(id, ChatSourceKind.GUIDE, available.guide.title, available.guide.text, false, selected)
     }
     fun memory(id: String) = prepare { selected ->
         check(store.memories.enabled())
