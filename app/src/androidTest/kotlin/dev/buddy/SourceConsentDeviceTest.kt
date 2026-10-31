@@ -124,6 +124,11 @@ class SourceConsentDeviceTest {
                 withContext(Dispatchers.Main) { model.saveModel(server.base, "fixture-model", "synthetic", true) }
                 withTimeout(10_000) { model.state.first { !it.testingModel && it.modelStatus.contains("verified") } }
                 assertEquals(2, server.requests.size)
+                assertTrue(
+                    Json.decodeFromString<dev.buddy.core.ModelConfig>(
+                        requireNotNull(store.get("model-config"))
+                    ).toolCallingVerified
+                )
                 val conversation = model.state.value.conversation
                 store.put("conversation:${conversation.id}", "conversation", Json.encodeToString(conversation))
                 val text = "Synthetic selected reference · café · こんにちは"

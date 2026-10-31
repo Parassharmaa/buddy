@@ -16,7 +16,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
-data class ModelConfig(val baseUrl: String, val model: String, val apiKey: String, val localHttp: Boolean = false) {
+data class ModelConfig(
+    val baseUrl: String,
+    val model: String,
+    val apiKey: String,
+    val localHttp: Boolean = false,
+    val toolCallingVerified: Boolean = false
+) {
     override fun toString(): String = "ModelConfig(redacted)"
 }
 

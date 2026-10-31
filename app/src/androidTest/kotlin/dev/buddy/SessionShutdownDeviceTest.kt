@@ -28,6 +28,64 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SessionShutdownDeviceTest {
     @Test(timeout = 30_000)
+    fun failedModelTestPreservesSavedCredentialsAndExplicitSavePersistsUnverified() = runBlocking {
+        assumeTrue(
+            InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
+                Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone")
+        )
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = (context.applicationContext as BuddyApplication).store
+        val models = ViewModelStore()
+        store.clear()
+        val previous = ModelConfig(
+            "https://old-model.invalid/v1",
+            "old-model",
+            "old-synthetic-key",
+            toolCallingVerified = true
+        )
+        store.put("model-config", "secret", Json.encodeToString(previous))
+        try {
+            withTimeout(15_000) {
+                val model = withContext(Dispatchers.Main) {
+                    BuddyViewModel(store, PhoneConnection(context)).also { models.put("failed-model", it) }
+                }
+                model.state.first { it.loaded }
+                assertTrue(model.state.value.modelStatus.contains("verified"))
+                withContext(Dispatchers.Main) {
+                    model.saveModel("https://127.0.0.1:1/v1", "new-model", "new-synthetic-key", false)
+                }
+                model.state.first { !it.testingModel }
+                assertEquals(previous, Json.decodeFromString<ModelConfig>(requireNotNull(store.get("model-config"))))
+                assertEquals("old-model", model.state.value.modelName)
+                withContext(Dispatchers.Main) {
+                    model.saveModel(
+                        "https://127.0.0.1:1/v1",
+                        "new-model",
+                        "new-synthetic-key",
+                        false,
+                        saveUnverified = true
+                    )
+                }
+                model.state.first { !it.testingModel }
+                val saved = Json.decodeFromString<ModelConfig>(requireNotNull(store.get("model-config")))
+                assertEquals("new-model", saved.model)
+                assertFalse(saved.toolCallingVerified)
+                val reloaded = withContext(Dispatchers.Main) {
+                    BuddyViewModel(store, PhoneConnection(context)).also { models.put("reloaded-model", it) }
+                }
+                reloaded.state.first { it.loaded }
+                assertTrue(reloaded.state.value.modelStatus.startsWith("Unverified"))
+                assertEquals("new-model", reloaded.state.value.modelName)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                withContext(Dispatchers.Main) { models.clear() }
+                store.clear()
+            }
+        }
+    }
+
+    @Test(timeout = 30_000)
     fun clearWaitsForEngineeringCleanupBeforeErasingEncryptedData() = runBlocking {
         assumeTrue(
             InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
@@ -120,7 +178,13 @@ class SessionShutdownDeviceTest {
                 }
                 model.state.first { it.loaded }
                 withContext(Dispatchers.Main) {
-                    model.saveModel("https://127.0.0.1:1/v1", "new-model", "new-synthetic-key", false)
+                    model.saveModel(
+                        "https://127.0.0.1:1/v1",
+                        "new-model",
+                        "new-synthetic-key",
+                        false,
+                        saveUnverified = true
+                    )
                 }
                 cleaning.await()
                 assertFalse(permit.isCurrent)

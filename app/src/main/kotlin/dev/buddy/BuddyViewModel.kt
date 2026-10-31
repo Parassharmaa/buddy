@@ -114,7 +114,12 @@ class BuddyViewModel(
                         modelBase = saved?.baseUrl ?: it.modelBase,
                         modelName =
                             saved?.model ?: "",
-                        localHttp = saved?.localHttp ?: false
+                        localHttp = saved?.localHttp ?: false,
+                        modelStatus = when {
+                            saved == null -> "Choose and test a model"
+                            saved.toolCallingVerified -> "Tool calling verified · saved model"
+                            else -> "Unverified · test this model before phone tasks"
+                        }
                     )
                 }
                 val retention = store.historyRetention()
@@ -176,9 +181,14 @@ class BuddyViewModel(
     fun dismissError() {
         _state.update { it.copy(error = null) }
     }
-    fun saveModel(base: String, name: String, key: String, localHttp: Boolean) {
-        if (_state.value.testingModel || !_state.value.loaded) return
-        _state.update { it.copy(testingModel = true, modelStatus = "Saving model settings") }
+    fun saveModel(base: String, name: String, key: String, localHttp: Boolean, saveUnverified: Boolean = false) {
+        if (_state.value.testingModel || !_state.value.loaded || _state.value.clearingData) return
+        _state.update {
+            it.copy(
+                testingModel = true,
+                modelStatus = if (saveUnverified) "Saving unverified model" else "Testing a harmless tool call"
+            )
+        }
         modelTestJob = viewModelScope.launch {
             try {
                 ModelEndpoint.parse(base, localHttp)
@@ -201,8 +211,10 @@ class BuddyViewModel(
                         key.ifBlank {
                             previous?.apiKey.orEmpty()
                         },
-                        localHttp
+                        localHttp,
+                        toolCallingVerified = !saveUnverified
                     )
+                val result = if (saveUnverified) "Unverified · saved without a connection test" else client.probe(next)
                 val commit: suspend () -> Unit = {
                     persistence.withLock { store.put("model-config", "secret", json.encodeToString(next)) }
                     config = next
@@ -213,13 +225,11 @@ class BuddyViewModel(
                             modelName = next.model,
                             localHttp = next.localHttp,
                             testingModel = true,
-                            modelStatus = "Testing a harmless tool call"
+                            modelStatus = result
                         )
                     }
                 }
                 if (next != previous) EngineeringSessions.supervisor.quiesce(commit) else commit()
-                val result = client.probe(next)
-                _state.update { it.copy(modelStatus = result) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
