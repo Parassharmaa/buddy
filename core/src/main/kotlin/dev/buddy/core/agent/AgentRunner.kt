@@ -19,9 +19,13 @@ import dev.buddy.core.sha256
 import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -98,19 +102,23 @@ class AgentRunner(
         if (reason != null) put("reason", reason)
     }
 
+    private data class ModelResult(val reply: ModelReply?)
+
     private data class Step(
         val data: JsonObject,
         val stop: RunState? = null,
         val summary: String = "Working",
         val pending: dev.buddy.core.ActionProposal? = null,
-        val error: Boolean = false
+        val error: Boolean = false,
+        val restart: Boolean = false
     )
 
     suspend fun run(
         request: RunRecord,
         config: ModelConfig,
         history: List<ChatMessage> = emptyList(),
-        limits: AgentLimits = AgentLimits()
+        limits: AgentLimits = AgentLimits(),
+        inbox: AgentInbox = AgentInbox()
     ): AgentCheckpoint {
         require(request.state in setOf(RunState.QUEUED, RunState.PREPARING))
         require(request.request.isNotBlank() && request.request.length <= 8192)
@@ -122,7 +130,7 @@ class AgentRunner(
         )
         check(lock.tryLock()) { "An agent run is already active" }
         try {
-            return Session(request, config, history, limits).execute()
+            return Session(request, config, history, limits, inbox).execute()
         } finally {
             lock.unlock()
         }
@@ -132,7 +140,8 @@ class AgentRunner(
         private val request: RunRecord,
         private val config: ModelConfig,
         history: List<ChatMessage>,
-        private val limits: AgentLimits
+        private val limits: AgentLimits,
+        private val inbox: AgentInbox
     ) {
         private val started = now()
         private var checkpoint = AgentCheckpoint(
@@ -174,6 +183,27 @@ class AgentRunner(
                 )
             pendingCalls.remove(callId)
         }
+        private fun appendUpdates(updates: List<String> = inbox.drain()): Boolean {
+            if (updates.isEmpty()) return false
+            checkpoint = checkpoint.copy(messages = checkpoint.messages + updates.map { ChatMessage("user", it) })
+            return true
+        }
+
+        private suspend fun askModel(config: ModelConfig): ModelResult = coroutineScope {
+            val request = async { model.complete(config, checkpoint.messages, definitions) }
+            try {
+                select {
+                    request.onAwait { ModelResult(it) }
+                    inbox.updates.onReceive {
+                        request.cancelAndJoin()
+                        ModelResult(null)
+                    }
+                }
+            } finally {
+                request.cancel()
+            }
+        }
+
         private fun balancePending() {
             pendingCalls.toList().forEach { reply(it, body("not_executed", "Run paused or stopped")) }
         }
@@ -183,6 +213,7 @@ class AgentRunner(
             pending: dev.buddy.core.ActionProposal? = null
         ): AgentCheckpoint {
             balancePending()
+            appendUpdates(inbox.closeAndDrain())
             publish(state, summary, pending)
             return checkpoint
         }
@@ -272,10 +303,16 @@ class AgentRunner(
                         action
                     )
                 } else {
+                    if (!inbox.canDispatch()) return Step(body("user_update"), restart = true)
                     currentCoroutineContext().ensureActive()
                     inAction = true
                     activeActionCall = callId
-                    val result = invocation.operation(approval)
+                    val result = invocation.operation(
+                        AgentDispatchContext(approval) {
+                            inbox.canDispatch() &&
+                                remaining() > 0
+                        }
+                    )
                     when (result) {
                         is ExecutionResult.Verified -> {
                             require(
@@ -351,6 +388,7 @@ class AgentRunner(
                 publish(RunState.PREPARING, "Preparing a bounded run")
                 while (true) {
                     currentCoroutineContext().ensureActive()
+                    appendUpdates()
                     if (checkpoint.modelRequests >= limits.modelRequests || remaining() == 0L ||
                         (limits.tokens != null && usage() >= limits.tokens)
                     ) {
@@ -379,8 +417,8 @@ class AgentRunner(
                         missingUsageRequests = checkpoint.missingUsageRequests + 1
                     )
                     publish(RunState.RUNNING, "Asking the model")
-                    val response: ModelReply = try {
-                        withTimeoutOrNull(remaining()) { model.complete(config, checkpoint.messages, definitions) }
+                    val modelResult = try {
+                        withTimeoutOrNull(remaining()) { askModel(config) }
                             ?: return finish(RunState.PARTIAL, "Active-time budget reached")
                     } catch (failure: ModelFailure) {
                         if (failure.category !in setOf("connection", "rate_limit", "provider") ||
@@ -402,6 +440,12 @@ class AgentRunner(
                             )
                         publish(RunState.RUNNING, "Waiting before a bounded model retry")
                         delay(wait)
+                        continue
+                    }
+                    val response = modelResult.reply
+                    if (response == null) {
+                        appendUpdates()
+                        publish(RunState.RUNNING, "Reading your update")
                         continue
                     }
                     if (response.tokens != null) {
@@ -477,6 +521,12 @@ class AgentRunner(
                     publish(RunState.RUNNING, "Validated model request")
                     for (call in calls) {
                         currentCoroutineContext().ensureActive()
+                        if (!inbox.canDispatch()) {
+                            balancePending()
+                            appendUpdates()
+                            publish(RunState.RUNNING, "Reading your update before dispatch")
+                            break
+                        }
                         if (remaining() ==
                             0L
                         ) {
@@ -491,8 +541,13 @@ class AgentRunner(
                                     verifyCompletion(outcome, ids)
                                 } == true
                             ) {
-                                reply(call.id, body("verified"))
-                                return finish(RunState.DONE, "Completed with host-verified evidence")
+                                if (inbox.closeIfEmpty()) {
+                                    reply(call.id, body("verified"))
+                                    return finish(RunState.DONE, "Completed with host-verified evidence")
+                                }
+                                reply(call.id, body("user_update", "Review the new user input before closing the run"))
+                                appendUpdates()
+                                continue
                             }
                             reply(
                                 call.id,
@@ -545,6 +600,12 @@ class AgentRunner(
                         inAction = false
                         activeActionCall = null
                         reply(call.id, step.data)
+                        if (step.restart) {
+                            balancePending()
+                            appendUpdates()
+                            publish(RunState.RUNNING, "Reading your update before dispatch")
+                            break
+                        }
                         if (step.stop != null) return finish(step.stop, step.summary, step.pending)
                         errors = if (step.error) errors + 1 else 0
                         if (errors >=
@@ -561,11 +622,13 @@ class AgentRunner(
                         reply(it, body("uncertain", "Cancellation cannot retract an in-flight effect"))
                     }
                     balancePending()
+                    appendUpdates(inbox.closeAndDrain())
                     runCatching { publish(RunState.CANCELLED, "Stopped; inspect any in-flight effect before retrying") }
                 }
                 throw cancelled
             } catch (_: Exception) {
                 balancePending()
+                appendUpdates(inbox.closeAndDrain())
                 checkpoint =
                     checkpoint.copy(
                         run = checkpoint.run.copy(

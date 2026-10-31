@@ -59,8 +59,14 @@ interface AgentTool {
     suspend fun prepare(arguments: JsonObject): AgentInvocation
 }
 
+class AgentDispatchContext internal constructor(val approval: Approval?, private val current: () -> Boolean) {
+    // The adapter must check this again in ActionExecutor's final dispatch gate.
+    fun isCurrent(): Boolean = current()
+}
+
 sealed interface AgentInvocation {
     class Read(val operation: suspend () -> Observation) : AgentInvocation
-    class Action(val proposal: ActionProposal, val operation: suspend (Approval?) -> ExecutionResult) : AgentInvocation
+    class Action(val proposal: ActionProposal, val operation: suspend (AgentDispatchContext) -> ExecutionResult) :
+        AgentInvocation
     data class Pause(val state: RunState, val reason: String) : AgentInvocation
 }

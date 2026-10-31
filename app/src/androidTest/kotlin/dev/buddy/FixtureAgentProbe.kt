@@ -53,9 +53,18 @@ internal object FixtureAgentProbe {
             },
             tool("fixture_draft", Effect.DRAFT) {
                 val draft = workspace.prepareDraft(requireNotNull(observed), text)
-                AgentInvocation.Action(draft.proposal) { approval ->
-                    workspace.execute(draft, approval) {
-                        DispatchGate(false, false, false, true, true, Long.MAX_VALUE, Long.MAX_VALUE, false)
+                AgentInvocation.Action(draft.proposal) { dispatch ->
+                    workspace.execute(draft, dispatch.approval) {
+                        DispatchGate(
+                            !dispatch.isCurrent(),
+                            false,
+                            false,
+                            true,
+                            true,
+                            Long.MAX_VALUE,
+                            Long.MAX_VALUE,
+                            false
+                        )
                     }
                 }
             }

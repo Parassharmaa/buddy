@@ -18,6 +18,7 @@ import dev.buddy.core.UiElement
 import dev.buddy.core.model.ChatModel
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -390,5 +391,213 @@ class AgentRunnerTest {
         assertFalse(encoded.contains(secret))
         assertEquals(AgentModelIdentity(config.baseUrl, config.model, false), result.model)
         assertEquals(limits, result.limits)
+    }
+
+    @Test fun anUpdateCancelsOnlyThePendingModelRequestAndPreservesTheGoal() = runTest {
+        val inbox = AgentInbox()
+        val started = CompletableDeferred<Unit>()
+        var requestCancelled = false
+        val model = Model {
+            when (it) {
+                0 -> {
+                    started.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        requestCancelled = true
+                    }
+                }
+
+                1 -> calls("observe")
+
+                else -> finish()
+            }
+        }
+        val run = async { runner(model).run(request, config, inbox = inbox) }
+        started.await()
+        assertTrue(inbox.offer("Use the latest user clarification"))
+        val result = run.await()
+        assertTrue(requestCancelled)
+        assertEquals(RunState.DONE, result.run.state)
+        assertEquals(3, result.modelRequests)
+        assertEquals(
+            listOf(request.request, "Use the latest user clarification"),
+            model.requests[1].filter { it.role == "user" }.map { it.content }
+        )
+        assertFalse(inbox.offer("This belongs to the next run"))
+    }
+
+    @Test fun inputDuringReadOnlyPreparationPreventsTheOldWrite() = runTest {
+        val inbox = AgentInbox()
+        val prepared = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var writes = 0
+        val write = tool("draft", Effect.DRAFT) {
+            prepared.complete(Unit)
+            release.await()
+            AgentInvocation.Action(action) {
+                writes++
+                ExecutionResult.Verified(listOf("e1"))
+            }
+        }
+        val model = Model {
+            if (it ==
+                0
+            ) {
+                calls("draft")
+            } else {
+                ModelReply(ChatMessage("assistant", "Reading the new instruction"), 10, "stop")
+            }
+        }
+        val run = async { runner(model, listOf(write)).run(request, config, inbox = inbox) }
+        prepared.await()
+        assertTrue(inbox.offer("Do not set that draft"))
+        release.complete(Unit)
+        val result = run.await()
+        assertEquals(RunState.PARTIAL, result.run.state)
+        assertEquals(0, writes)
+        assertTrue(result.messages.any { it.role == "tool" && it.content.orEmpty().contains("user_update") })
+        assertTrue(model.requests.last().any { it.content == "Do not set that draft" })
+    }
+
+    @Test fun inputCannotRetractOrReplayAnAlreadyDispatchedAction() = runTest {
+        val inbox = AgentInbox()
+        val dispatched = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var writes = 0
+        val write = tool("draft", Effect.DRAFT) {
+            AgentInvocation.Action(action) {
+                writes++
+                dispatched.complete(Unit)
+                release.await()
+                ExecutionResult.Verified(listOf("e1"))
+            }
+        }
+        val model = Model { if (it == 0) calls("draft") else finish("e1") }
+        val run = async { runner(model, listOf(write)).run(request, config, inbox = inbox) }
+        dispatched.await()
+        assertTrue(inbox.offer("Now report the verified status"))
+        release.complete(Unit)
+        val result = run.await()
+        assertEquals(RunState.DONE, result.run.state)
+        assertEquals(1, writes)
+        val context = model.requests.last()
+        assertTrue(context.any { it.role == "tool" && it.content.orEmpty().contains("verified") })
+        assertTrue(context.any { it.role == "user" && it.content == "Now report the verified status" })
+    }
+
+    @Test fun inputArrivingDuringVerificationPreventsPrematureCompletion() = runTest {
+        val inbox = AgentInbox()
+        val verifying = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val model = Model {
+            when (it) {
+                0 -> calls("observe")
+                1 -> finish()
+                else -> ModelReply(ChatMessage("assistant", "The task changed"), 10, "stop")
+            }
+        }
+        val run = async {
+            runner(model, verify = { _, _ ->
+                verifying.complete(Unit)
+                release.await()
+                true
+            }).run(request, config, inbox = inbox)
+        }
+        verifying.await()
+        assertTrue(inbox.offer("There is another requirement"))
+        release.complete(Unit)
+        val result = run.await()
+        assertEquals(RunState.PARTIAL, result.run.state)
+        assertTrue(model.requests.last().any { it.content == "There is another requirement" })
+        assertFalse(inbox.offer("Next run"))
+    }
+
+    @Test fun theCoordinatorRejectsDuplicateConversationRunsBeforeTheSecondModelCall() = runTest {
+        val coordinator = AgentCoordinator()
+        val started = CompletableDeferred<Unit>()
+        val firstModel = Model {
+            if (it == 0) {
+                started.complete(Unit)
+                awaitCancellation()
+            } else {
+                ModelReply(ChatMessage("assistant", "Updated"), 10, "stop")
+            }
+        }
+        val first = async { coordinator.run(runner(firstModel), request, config) }
+        started.await()
+        val secondModel = Model { ModelReply(ChatMessage("assistant", "Ready"), 10, "stop") }
+        val duplicate = runCatching { coordinator.run(runner(secondModel), request.copy(id = "r2"), config) }
+        assertTrue(duplicate.exceptionOrNull() is IllegalStateException)
+        assertEquals(0, secondModel.calls)
+        assertTrue(coordinator.isRunning(request.conversationId))
+        assertTrue(coordinator.update(request.conversationId, "Continue with this clarification"))
+        assertEquals(RunState.PARTIAL, first.await().run.state)
+        assertFalse(coordinator.isRunning(request.conversationId))
+        assertFalse(coordinator.update(request.conversationId, "This starts another run"))
+        coordinator.run(runner(secondModel), request.copy(id = "r2"), config)
+        assertEquals(1, secondModel.calls)
+    }
+
+    @Test fun coordinatorStopCancelsItsChildAndReleasesTheConversation() = runTest {
+        val coordinator = AgentCoordinator()
+        val started = CompletableDeferred<Unit>()
+        val saved = mutableListOf<AgentCheckpoint>()
+        val model = Model {
+            started.complete(Unit)
+            awaitCancellation()
+        }
+        val run = async { coordinator.run(runner(model, saved = saved), request, config) }
+        started.await()
+        assertTrue(coordinator.stop(request.conversationId))
+        assertTrue(runCatching { run.await() }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals(RunState.CANCELLED, saved.last().run.state)
+        assertFalse(coordinator.isRunning(request.conversationId))
+        assertFalse(coordinator.stop(request.conversationId))
+    }
+
+    @Test fun updatesBetweenValidationAndDispatchKeepToolResultsBeforeTheNewUserMessage() = runTest {
+        val inbox = AgentInbox()
+        var prepared = 0
+        var offered = false
+        val read = tool {
+            prepared++
+            AgentInvocation.Read { observation }
+        }
+        val model = Model {
+            if (it == 0) calls("observe") else ModelReply(ChatMessage("assistant", "Updated"), 10, "stop")
+        }
+        val agent = AgentRunner(
+            model,
+            listOf(read),
+            ObservationPrivacyGate(emptySet()),
+            { _, _ -> true },
+            persist = {
+                if (!offered && it.run.summary == "Validated model request") {
+                    offered = true
+                    assertTrue(inbox.offer("Replace that pending request"))
+                }
+            },
+            retainObservation = {},
+            now = { 0 }
+        )
+        agent.run(request, config, inbox = inbox)
+        assertEquals(0, prepared)
+        assertEquals(listOf("system", "user", "assistant", "tool", "user"), model.requests.last().map { it.role })
+        assertEquals(
+            model.requests.last()[2].toolCalls!!.single().id,
+            model.requests.last()[3].toolCallId
+        )
+    }
+
+    @Test fun inboxBoundsPendingInputAndClosesAtomically() {
+        val inbox = AgentInbox()
+        repeat(8) { assertTrue(inbox.offer("Update $it")) }
+        assertFalse(inbox.offer("Beyond the queue limit"))
+        assertFalse(inbox.closeIfEmpty())
+        assertEquals((0..7).map { "Update $it" }, inbox.drain())
+        assertTrue(inbox.closeIfEmpty())
+        assertFalse(inbox.offer("Belongs to a later run"))
+        assertTrue(inbox.closeAndDrain().isEmpty())
     }
 }
