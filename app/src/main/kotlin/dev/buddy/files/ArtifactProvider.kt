@@ -11,6 +11,7 @@ import android.os.Binder
 import android.os.ParcelFileDescriptor
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
+import androidx.core.net.toUri
 import dev.buddy.BuddyApplication
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.WorkspaceArtifact
@@ -100,7 +101,7 @@ class ArtifactProvider : ContentProvider() {
         fun revokeAll(context: android.content.Context) {
             PrivateFileDescriptors.revokeAll()
             context.revokeUriPermission(
-                Uri.parse("content://${context.packageName}.artifacts"),
+                "content://${context.packageName}.artifacts".toUri(),
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
         }
