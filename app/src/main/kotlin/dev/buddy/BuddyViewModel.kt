@@ -67,6 +67,7 @@ class BuddyViewModel(
     private val documents: DocumentAccess? = null,
     browserContext: Context? = null
 ) : ViewModel() {
+    private val applicationContext = browserContext?.applicationContext
     private val client = ModelClient()
     private val downloader = BrowserDownloader()
     private val _state = MutableStateFlow(BuddyState())
@@ -456,6 +457,7 @@ class BuddyViewModel(
             val identityRemoved = phone.disconnect(true)
             try {
                 browser.clearData()
+                applicationContext?.let { dev.buddy.files.ArtifactProvider.revokeAll(it) }
                 persistence.withLock { store.clear() }
                 config = null
                 _state.value = BuddyState(
