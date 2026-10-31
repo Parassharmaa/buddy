@@ -11,7 +11,9 @@ import android.os.SystemClock
 // to the version-probed system interface. This adapter can launch only the fixture.
 @android.annotation.SuppressLint("PrivateApi", "BlockedPrivateApi")
 internal object ShellActivityAdapter {
-    private fun service(): Any = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)
+    private fun service(): Any = requireNotNull(
+        Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)
+    )
 
     private val contract get() = Class.forName("android.app.IActivityTaskManager")
 

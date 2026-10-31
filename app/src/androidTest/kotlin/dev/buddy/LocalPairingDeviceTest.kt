@@ -142,6 +142,13 @@ class LocalPairingDeviceTest {
             target?.let { visit(it, 0) }
             return result
         }
+
+        @Suppress("DEPRECATION")
+        fun checked(node: AccessibilityNodeInfo): Boolean = if (Build.VERSION.SDK_INT >= 36) {
+            node.checked == AccessibilityNodeInfo.CHECKED_STATE_TRUE
+        } else {
+            node.isChecked
+        }
         fun click(node: AccessibilityNodeInfo): Boolean {
             var target: AccessibilityNodeInfo? = node
             while (target != null && !target.isClickable) target = target.parent
@@ -242,7 +249,7 @@ class LocalPairingDeviceTest {
                     }
                     if (title != null) {
                         wirelessPageSeen = true
-                        if (toggle != null && !toggle.isChecked && !masterToggled) {
+                        if (toggle != null && !checked(toggle) && !masterToggled) {
                             if (click(toggle)) masterToggled = true
                         }
                     } else if (!wirelessPageSeen) {
@@ -255,7 +262,7 @@ class LocalPairingDeviceTest {
                         it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true
                     }
                     pairingRowSeen = pairingItem != null
-                    if (title != null && toggle?.isChecked == true && pairingItem?.isEnabled == true) break
+                    if (title != null && toggle?.let(::checked) == true && pairingItem?.isEnabled == true) break
                     delay(200)
                 }
             }
