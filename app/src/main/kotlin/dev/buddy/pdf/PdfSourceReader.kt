@@ -51,7 +51,6 @@ internal class PdfSourceReader(context: Context, private val store: EncryptedSto
     private fun readOnlyMemory(bytes: ByteArray): ParcelFileDescriptor {
         val descriptor = Os.memfd_create("buddy-pdf-preview", OsConstants.MFD_CLOEXEC)
         try {
-            Os.fchmod(descriptor, OsConstants.S_IRUSR)
             var written = 0
             while (written < bytes.size) {
                 val count = Os.write(descriptor, bytes, written, bytes.size - written)
