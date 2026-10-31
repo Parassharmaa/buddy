@@ -270,9 +270,10 @@ class WebSession(context: Context) : WebPort {
     }
 
     suspend fun clearProfile() = withContext(Dispatchers.Main.immediate) {
-        close()
+        val completeDeletion = WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)
+        closeView(clearCache = !completeDeletion)
         val storage = WebStorage.getInstance()
-        withTimeoutOrNull(5_000) {
+        withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine<Unit> { continuation ->
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
                     WebStorageCompat.deleteBrowsingData(storage, application.mainExecutor) {
@@ -288,7 +289,8 @@ class WebSession(context: Context) : WebPort {
         } ?: error("Website data cleanup incomplete")
         check(!CookieManager.getInstance().hasCookies())
     }
-    fun close() {
+    fun close() = closeView(clearCache = true)
+    private fun closeView(clearCache: Boolean) {
         mainThread()
         if (closed) return
         closed = true
@@ -300,7 +302,7 @@ class WebSession(context: Context) : WebPort {
         view?.let {
             (it.parent as? ViewGroup)?.removeView(it)
             it.stopLoading()
-            runCatching { it.clearCache(true) }
+            if (clearCache) runCatching { it.clearCache(true) }
             runCatching { it.clearHistory() }
             it.destroy()
         }

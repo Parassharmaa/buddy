@@ -134,6 +134,7 @@ class BrowserDeviceTest {
         val activity = instrumentation.startActivitySync(
             Intent(context, BrowserFixtureActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ) as BrowserFixtureActivity
+        var primaryFailure: Throwable? = null
         try {
             Pages().use { pages ->
                 withTimeout(5_000) {
@@ -141,12 +142,29 @@ class BrowserDeviceTest {
                 }
                 block(activity, pages)
             }
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
         } finally {
-            withContext(Dispatchers.Main) {
-                activity.session.clearProfile()
-                activity.finish()
+            val cleanup = runCatching {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    try {
+                        activity.session.clearProfile()
+                    } finally {
+                        activity.finish()
+                    }
+                }
+            }.exceptionOrNull()
+            val idle = runCatching { instrumentation.waitForIdleSync() }.exceptionOrNull()
+            val original = primaryFailure
+            if (original != null) {
+                listOfNotNull(cleanup, idle).filter { it !== original }.forEach(original::addSuppressed)
+            } else if (cleanup != null) {
+                if (idle != null && idle !== cleanup) cleanup.addSuppressed(idle)
+                throw cleanup
+            } else if (idle != null) {
+                throw idle
             }
-            instrumentation.waitForIdleSync()
         }
     }
 
@@ -467,6 +485,39 @@ class BrowserDeviceTest {
                 outside?.let { resolver.delete(it, null, null) }
                 store.clear()
             }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun clearingTheProfileClosesThePageAndRemovesStorageBeforeAFreshSession() = runBlocking {
+        withBrowser { activity, pages ->
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+            suspend fun evaluate(expression: String): String = withContext(Dispatchers.Main) {
+                val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                val view = root.getChildAt(0) as android.webkit.WebView
+                val result = kotlinx.coroutines.CompletableDeferred<String>()
+                view.evaluateJavascript(expression) { result.complete(it) }
+                withTimeout(2_000) { result.await() }
+            }
+            assertEquals(
+                "true",
+                evaluate(
+                    "localStorage.setItem('buddy-fixture','synthetic');" +
+                        "localStorage.getItem('buddy-fixture') === 'synthetic'"
+                )
+            )
+            withContext(Dispatchers.Main) {
+                assertTrue(android.webkit.CookieManager.getInstance().hasCookies())
+                activity.session.clearProfile()
+                assertTrue(activity.session.isClosed)
+                assertFalse(android.webkit.CookieManager.getInstance().hasCookies())
+                activity.resetSession()
+            }
+            withTimeout(5_000) {
+                while (!withContext(Dispatchers.Main) { activity.session.hasWindow }) delay(20)
+            }
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+            assertEquals("null", evaluate("localStorage.getItem('buddy-fixture')"))
         }
     }
 }
