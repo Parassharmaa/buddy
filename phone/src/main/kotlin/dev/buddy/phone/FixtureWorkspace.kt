@@ -84,7 +84,7 @@ class FixtureWorkspace private constructor(
         state.getInt("windowMetadataScopedCount"),
         (state.getIntArray("windowMetadataDisplays") ?: intArrayOf()).take(16),
         (state.getIntArray("windowMetadataForeign") ?: intArrayOf()).take(64),
-        (state.getIntArray("windowMetadataForeignGeometry") ?: intArrayOf()).take(48),
+        (state.getIntArray("windowMetadataForeignGeometry") ?: intArrayOf()).take(64),
         state.getString("windowMetadataMonitorProbe", "unavailable").take(256)
     )
 

@@ -60,23 +60,38 @@ internal object WindowPrivacy {
                 listOf(it.ownerUid, it.layoutParamsType, it.inputConfig, it.layoutParamsFlags)
             },
             foreignGeometry = scoped.filter { it.ownerUid != fixtureUid }.take(16).flatMap {
-                monitor?.geometry(it) ?: listOf(if (it.token != null) 1 else 0, -1, -1)
+                monitor?.geometry(it) ?: listOf(if (it.token != null) 1 else 0, -1, -1, 5)
             },
-            monitorProbe = monitorProbe
+            monitorProbe = monitorProbe + ";fixture=" +
+                (scoped.firstOrNull { it.ownerUid == fixtureUid }?.let { monitor?.geometry(it) } ?: emptyList<Int>())
+                    .joinToString(",")
         )
     }
 
     private class Monitor(private val policy: SystemInputMonitorPolicy, private val contentSize: Field) {
+        val contentType: String get() = contentSize.type.name
+
         fun geometry(window: InputWindowHandle): List<Int> {
+            var status = 0
             val size = try {
-                contentSize.get(window) as? Size
+                val value = contentSize.get(window)
+                status = when (value) {
+                    null -> 1
+                    is Size -> 0
+                    else -> 2
+                }
+                value as? Size
             } catch (_: Exception) {
+                status = 3
                 null
             } catch (_: LinkageError) {
+                status = 4
                 null
             }
-            return listOf(if (window.token != null) 1 else 0, size?.width ?: -1, size?.height ?: -1)
+            // token, width, height, status: missing geometry never implies a bufferless layer.
+            return listOf(if (window.token != null) 1 else 0, size?.width ?: -1, size?.height ?: -1, status)
         }
+
         fun matches(window: InputWindowHandle): Boolean {
             val values = geometry(window)
             return policy.matches(
@@ -147,7 +162,7 @@ internal object WindowPrivacy {
                 )
                 monitorProbe = "contentSize"
                 Monitor(policy, InputWindowHandle::class.java.getDeclaredField("contentSize")).also {
-                    monitorProbe = "ready:${monitorBits.joinToString(",")}"
+                    monitorProbe = "ready:${monitorBits.joinToString(",")}:${it.contentType}"
                 }
             } catch (failure: ReflectiveOperationException) {
                 monitorProbe += ":" + failure.javaClass.simpleName

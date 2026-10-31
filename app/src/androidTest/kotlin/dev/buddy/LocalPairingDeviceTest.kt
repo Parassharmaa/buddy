@@ -115,12 +115,12 @@ class LocalPairingDeviceTest {
             target?.let { visit(it, 0) }
             return result
         }
-        fun click(node: AccessibilityNodeInfo) {
+        fun click(node: AccessibilityNodeInfo): Boolean {
             var target: AccessibilityNodeInfo? = node
             while (target != null && !target.isClickable) target = target.parent
-            check(target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) { "Settings control unavailable" }
+            return target?.isEnabled == true && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
-        fun allowNetwork() {
+        fun allowNetwork(): Boolean {
             val controls = nodes()
             if (controls.any {
                     it.text?.toString()?.startsWith("Allow wireless debugging", ignoreCase = true) == true
@@ -130,10 +130,11 @@ class LocalPairingDeviceTest {
                 controls.firstOrNull {
                     it.viewIdResourceName == "android:id/button1" && it.isEnabled
                 }?.let {
-                    click(it)
-                    allowedConfirmation = true
+                    if (click(it)) allowedConfirmation = true
                 }
+                return true
             }
+            return false
         }
         fun portIn(text: String): Int? {
             val addressPort = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})").find(text)
@@ -166,7 +167,10 @@ class LocalPairingDeviceTest {
             var forward = true
             withTimeout(15_000) {
                 while (true) {
-                    allowNetwork()
+                    if (allowNetwork()) {
+                        delay(150)
+                        continue
+                    }
                     val controls = nodes()
                     developerTitleSeen = developerTitleSeen || controls.any {
                         it.text?.toString()?.contains("Developer options", ignoreCase = true) == true
@@ -196,31 +200,34 @@ class LocalPairingDeviceTest {
             stage = "enable_wireless_detail_page"
             withTimeout(15_000) {
                 while (true) {
-                    allowNetwork()
+                    if (allowNetwork()) {
+                        delay(150)
+                        continue
+                    }
                     val controls = nodes()
+                    val toggle = controls.firstOrNull {
+                        it.packageName?.toString() == "com.android.settings" && it.isCheckable && it.isEnabled
+                    }
                     val title = controls.firstOrNull {
                         it.packageName?.toString() == "com.android.settings" &&
                             it.text?.toString()?.contains("Use wireless debugging", ignoreCase = true) == true
                     }
                     if (title != null) {
                         wirelessPageSeen = true
-                        val toggle = controls.firstOrNull {
-                            it.packageName?.toString() == "com.android.settings" && it.isCheckable && it.isEnabled
-                        }
                         if (toggle != null && !toggle.isChecked && !masterToggled) {
-                            click(toggle)
-                            masterToggled = true
+                            if (click(toggle)) masterToggled = true
                         }
-                    } else {
+                    } else if (!wirelessPageSeen) {
                         // A disabled primary-switch row can enable its switch before opening the fragment.
                         device.findObject(
                             By.pkg("com.android.settings").text("Wireless debugging").displayId(Display.DEFAULT_DISPLAY)
                         )?.click()
                     }
-                    pairingRowSeen = controls.any {
+                    val pairingItem = controls.firstOrNull {
                         it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true
                     }
-                    if (wirelessPageSeen && pairingRowSeen) break
+                    pairingRowSeen = pairingItem != null
+                    if (title != null && toggle?.isChecked == true && pairingItem?.isEnabled == true) break
                     delay(200)
                 }
             }
@@ -228,13 +235,10 @@ class LocalPairingDeviceTest {
             withTimeout(10_000) {
                 while (true) {
                     val item = nodes().firstOrNull {
-                        it.packageName?.toString() == "com.android.settings" && it.isVisibleToUser &&
+                        it.packageName?.toString() == "com.android.settings" && it.isVisibleToUser && it.isEnabled &&
                             it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true
                     }
-                    if (item != null) {
-                        click(item)
-                        break
-                    }
+                    if (item != null && click(item)) break
                     delay(100)
                 }
             }
@@ -263,16 +267,21 @@ class LocalPairingDeviceTest {
                     }
                 }
                 stage = "finish_pairing_dialog"
-                val controls = nodes()
-                val onDetails = controls.any {
-                    it.text?.toString()?.let { text ->
-                        text.contains("Use wireless debugging", ignoreCase = true) ||
-                            text.contains("Pair device with pairing code", ignoreCase = true)
-                    } == true
-                }
-                if (!onDetails) {
-                    device.pressBack()
-                    delay(150)
+                withTimeout(10_000) {
+                    while (true) {
+                        val controls = nodes()
+                        if (controls.any {
+                                it.text?.toString()?.contains("Use wireless debugging", ignoreCase = true) == true
+                            }
+                        ) {
+                            break
+                        }
+                        controls.firstOrNull {
+                            it.packageName?.toString() == "com.android.settings" && it.isEnabled &&
+                                it.text?.toString()?.lowercase() in setOf("close", "done")
+                        }?.let(::click)
+                        delay(100)
+                    }
                 }
                 stage = "wireless_connection_port"
                 val portSummary = Pattern.compile(
@@ -282,7 +291,10 @@ class LocalPairingDeviceTest {
                     var searchUp = true
                     var attempt = 0
                     while (true) {
-                        allowNetwork()
+                        if (allowNetwork()) {
+                            delay(150)
+                            continue
+                        }
                         val controls = nodes()
                         portPageVisible = controls.any {
                             it.text?.toString()?.let { text ->
@@ -434,16 +446,24 @@ class LocalPairingDeviceTest {
                 fd = descriptors[0].fileDescriptor
                 events = OsConstants.POLLIN.toShort()
             }
-            if (Os.poll(arrayOf(poll), 3_000) <= 0) return null to "timeout"
+            val deadline = SystemClock.elapsedRealtime() + 3_000
+            val output = StringBuilder()
             val buffer = ByteArray(256)
-            val count = Os.read(descriptors[0].fileDescriptor, buffer, 0, buffer.size)
-            val output = if (count > 0) String(buffer, 0, count, Charsets.UTF_8) else ""
-            val port = Regex("(?m)^BUDDY_ADB_PORT:([0-9]{1,5})$").find(output)?.groupValues?.get(1)
-                ?.toIntOrNull()?.takeIf { it in 1..65535 }
-            val status = output.lineSequence().firstOrNull {
-                it.matches(Regex("BUDDY_ADB_PORT_(?:NOT_READY|FAILED:[A-Za-z0-9_]{1,64})"))
-            } ?: if (port != null) "ready" else "unavailable"
-            port to status
+            while (output.length < 1024) {
+                val remaining = (deadline - SystemClock.elapsedRealtime()).coerceIn(0, 3_000).toInt()
+                if (remaining == 0 || Os.poll(arrayOf(poll), remaining) <= 0) break
+                val count = Os.read(descriptors[0].fileDescriptor, buffer, 0, buffer.size)
+                if (count <= 0) break
+                output.append(String(buffer, 0, count, Charsets.UTF_8))
+                val port = Regex("(?m)^BUDDY_ADB_PORT:([0-9]{1,5})$").find(output)?.groupValues?.get(1)
+                    ?.toIntOrNull()?.takeIf { it in 1..65535 }
+                if (port != null) return port to "ready"
+                val status = output.lineSequence().firstOrNull {
+                    it.matches(Regex("BUDDY_ADB_PORT_(?:NOT_READY|FAILED:[A-Za-z0-9_]{1,64})"))
+                }
+                if (status != null) return null to status
+            }
+            null to if (output.isEmpty()) "empty" else "unrecognized"
         } finally {
             descriptors.forEach { runCatching { it.close() } }
         }
