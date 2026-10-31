@@ -106,4 +106,10 @@ if ! timeout --signal=TERM --kill-after=30s 6m ./gradlew "${device_gradle_args[@
     device_result=1
     report_failed_processes "$framework_pid_before"
 fi
+# AGP can return success after an instrumentation process dies. Check the actual
+# method results while adb is still available, so those crashes retain diagnostics.
+if ! python3 scripts/report-device-tests.py; then
+    device_result=1
+    report_failed_processes "$framework_pid_before"
+fi
 exit "$device_result"
