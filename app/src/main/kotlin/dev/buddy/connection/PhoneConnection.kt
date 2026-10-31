@@ -59,6 +59,14 @@ class PhoneConnection(private val context: Context) {
         }
     }
 
+    internal fun engineeringHelper(): IBuddyHelper {
+        check(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+        return synchronized(stateLock) {
+            check(!disconnecting.get() && stopping == null)
+            requireNotNull(helper).also { check(it.asBinder().isBinderAlive) }
+        }
+    }
+
     suspend fun discover(kind: AdbServiceKind) {
         val ticket = generation.get()
         if (!current(ticket) || !operations.tryLock()) return

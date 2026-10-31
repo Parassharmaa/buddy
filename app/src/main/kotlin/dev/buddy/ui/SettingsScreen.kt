@@ -1,6 +1,7 @@
 package dev.buddy.ui
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -41,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,11 +58,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.buddy.BuddyState
 import dev.buddy.BuddyViewModel
 import dev.buddy.storage.HistoryRetention
+import kotlinx.coroutines.launch
 
 @Composable internal fun SettingsScreen(state: BuddyState, model: BuddyViewModel) {
     var section by rememberSaveable { mutableStateOf("Overview") }
     BackHandler(enabled = section != "Overview") { section = "Overview" }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val status by model.phone.status.collectAsStateWithLifecycle()
     val phoneBusy by model.phone.busy.collectAsStateWithLifecycle()
     Column(
@@ -234,6 +238,19 @@ import dev.buddy.storage.HistoryRetention
                     "Paired identity, debugging transport, helper authentication and screen access are checked independently. No phone-control capability has been qualified on this device."
                 )
                 Text(status)
+                if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                model.phone.disconnect()
+                                context.startActivity(
+                                    Intent().setClassName(context, "dev.buddy.qualification.PhoneQualificationActivity")
+                                )
+                            }
+                        },
+                        enabled = !phoneBusy && !state.active && !state.importing && !state.exporting
+                    ) { Text("Open foreground fixture check") }
+                }
             }
         }
         Spacer(Modifier.height(24.dp))
