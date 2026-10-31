@@ -14,12 +14,19 @@ import dev.buddy.storage.ArtifactReadBudget
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.Executors
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -56,6 +63,15 @@ class BrowserDeviceTest {
                                 }
                             }
                             val content = when (path.substringBefore('?')) {
+                                "/upload" ->
+                                    "<input id='upload' type='file' accept='.txt' style='width:240px;height:80px'>" +
+                                        "<script>window.uploadResults=[];" +
+                                        "document.getElementById('upload').addEventListener('change',function(){" +
+                                        "if(!this.files[0])return;const r=new FileReader();" +
+                                        "r.onload=()=>window.uploadResults.push(r.result);" +
+                                        "r.onerror=()=>window.uploadResults.push('READ_FAILED');" +
+                                        "r.readAsText(this.files[0]);});</script>"
+
                                 "/private" ->
                                     "<p>Never collect this body</p>" +
                                         "<input type='password' value='synthetic secret'>"
@@ -318,6 +334,124 @@ class BrowserDeviceTest {
                     }
                 }
             } finally {
+                store.clear()
+            }
+        }
+    }
+
+    private suspend fun script(view: android.webkit.WebView, expression: String): String =
+        withContext(Dispatchers.Main) {
+            withTimeout(2_000) {
+                suspendCancellableCoroutine { continuation ->
+                    view.evaluateJavascript(expression) { value ->
+                        if (continuation.isActive) continuation.resume(value)
+                    }
+                }
+            }
+        }
+
+    @Test(timeout = 60_000)
+    fun browserUploadAcceptsOnlyAnExplicitPrivateWorkspaceFileAndKeepsThePagePrivate() = runBlocking {
+        org.junit.Assume.assumeTrue(
+            InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
+                android.os.Build.HARDWARE == "ranchu" && android.os.Build.FINGERPRINT.contains("sdk_gphone")
+        )
+        withBrowser { activity, pages ->
+            val store = (activity.application as BuddyApplication).store
+            val resolver = activity.contentResolver
+            var outside: android.net.Uri? = null
+            store.clear()
+            try {
+                val workspace = java.util.UUID.randomUUID().toString()
+                store.put(
+                    "conversation:$workspace",
+                    "conversation",
+                    Json.encodeToString(dev.buddy.core.Conversation(workspace, "Synthetic upload"))
+                )
+                val approved = "Synthetic approved upload · café · こんにちは"
+                val artifact = store.artifacts.importFile(
+                    workspace,
+                    "approved.txt",
+                    "text/plain",
+                    android.net.Uri.parse("content://fixture/upload"),
+                    approved.toByteArray()
+                )
+                val unapproved = requireNotNull(
+                    resolver.insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "buddy-unapproved-upload.txt")
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                    )
+                ).also { outside = it }
+                dev.buddy.files.DocumentAccess(activity).write(unapproved, "Outside workspace canary".toByteArray())
+                resolver.update(
+                    unapproved,
+                    android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                    },
+                    null,
+                    null
+                )
+                withContext(Dispatchers.Main) { activity.session.navigate(WebAddress.parse(pages.origin + "/upload")) }
+                withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
+                val view = withContext(Dispatchers.Main) {
+                    val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                    root.getChildAt(0) as android.webkit.WebView
+                }
+                suspend fun choose() {
+                    // Fresh bounds from our fixed fixture produce a real user gesture, not an input replay.
+                    val encoded = script(
+                        view,
+                        "(function(){const r=document.getElementById('upload').getBoundingClientRect();" +
+                            "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,innerWidth]);})()"
+                    )
+                    val bounds = Json.parseToJsonElement(
+                        Json.parseToJsonElement(encoded).jsonPrimitive.content
+                    ).jsonArray
+                    val point = withContext(Dispatchers.Main) {
+                        assertEquals(android.view.Display.DEFAULT_DISPLAY, view.display.displayId)
+                        val position = IntArray(2).also(view::getLocationOnScreen)
+                        val scale = view.width / bounds[2].jsonPrimitive.double
+                        val x = position[0] + (bounds[0].jsonPrimitive.double * scale).toInt()
+                        val y = position[1] + (bounds[1].jsonPrimitive.double * scale).toInt()
+                        assertTrue(x in position[0] until position[0] + view.width)
+                        assertTrue(y in position[1] until position[1] + view.height)
+                        x to y
+                    }
+                    assertTrue(
+                        androidx.test.uiautomator.UiDevice.getInstance(
+                            InstrumentationRegistry.getInstrumentation()
+                        ).click(point.first, point.second)
+                    )
+                    withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
+                }
+                choose()
+                withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(unapproved)) }
+                withTimeout(2_000) { activity.session.state.first { !it.hasUploadRequest } }
+                choose()
+                val uri = android.net.Uri.Builder().scheme("content").authority(activity.packageName + ".artifacts")
+                    .appendPath(workspace).appendPath(artifact.id).build()
+                withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(uri)) }
+                withTimeout(5_000) {
+                    while (true) {
+                        val values = Json.parseToJsonElement(
+                            Json.parseToJsonElement(
+                                script(view, "JSON.stringify(window.uploadResults)")
+                            ).jsonPrimitive.content
+                        ).jsonArray
+                        if (values.isNotEmpty()) {
+                            assertEquals(listOf(approved), values.map { it.jsonPrimitive.content })
+                            break
+                        }
+                        delay(20)
+                    }
+                }
+                assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), activity.session.observe(pages.origin))
+            } finally {
+                outside?.let { resolver.delete(it, null, null) }
                 store.clear()
             }
         }
