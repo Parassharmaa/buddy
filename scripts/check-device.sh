@@ -78,7 +78,7 @@ device_gradle_args=(--no-daemon --no-parallel --max-workers=2 --continue
     -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000)
 device_result=0
 framework_pid_before="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || framework_pid_before=''
-if ! ./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest; then
+if ! timeout --signal=TERM --kill-after=30s 6m ./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest; then
     device_result=1
     report_failed_processes "$framework_pid_before"
 fi
@@ -86,15 +86,15 @@ fi
 # rebuilt fixture after its own suite, before the independent Buddy suite.
 python3 scripts/check-apk-signatures.py
 wait_for_framework
-adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+timeout 60 adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
+timeout 60 adb install -r app/build/outputs/apk/debug/app-debug.apk
 if (( $(adb shell getprop ro.build.version.sdk | tr -d '\r') >= 37 )); then
     # Disposable emulator only. Production requests this permission through its setup UI.
-    adb shell pm grant dev.buddy android.permission.ACCESS_LOCAL_NETWORK
+    timeout 10 adb shell pm grant dev.buddy android.permission.ACCESS_LOCAL_NETWORK
 fi
 prepare_device
 framework_pid_before="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || framework_pid_before=''
-if ! ./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest; then
+if ! timeout --signal=TERM --kill-after=30s 6m ./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest; then
     device_result=1
     report_failed_processes "$framework_pid_before"
 fi
