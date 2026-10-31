@@ -121,7 +121,9 @@ class HelperDeviceTest {
             }
             check(!privacy.getBoolean("secureWindow") && !privacy.getBoolean("mixedWindowOwners")) {
                 "Fixture privacy blocked; secure=${privacy.getBoolean("secureWindow")}; " +
-                    "foreign=${privacy.getIntArray("windowMetadataForeign")?.contentToString()}"
+                    "foreign=${privacy.getIntArray("windowMetadataForeign")?.contentToString()}; " +
+                    "geometry=${privacy.getIntArray("windowMetadataForeignGeometry")?.contentToString()}; " +
+                    "monitor=${privacy.getString("windowMetadataMonitorProbe")}"
             }
             stage = "takeover"
             connected.takeOverFixture(lease, token, UUID.randomUUID().toString())

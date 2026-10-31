@@ -22,7 +22,9 @@ internal object WindowPrivacy {
         val windowCount: Int = 0,
         val scopedCount: Int = 0,
         val displays: List<Int> = emptyList(),
-        val foreignWindows: List<Int> = emptyList()
+        val foreignWindows: List<Int> = emptyList(),
+        val foreignGeometry: List<Int> = emptyList(),
+        val monitorProbe: String = "unavailable"
     ) {
         val known: Boolean get() = status == Status.AVAILABLE
     }
@@ -32,7 +34,8 @@ internal object WindowPrivacy {
         displayId: Int,
         fixtureUid: Int,
         sinks: SystemInputSinkPolicy,
-        monitor: Monitor?
+        monitor: Monitor?,
+        monitorProbe: String
     ): Result {
         if (windows.size > 2048) return Result(Status.LIMIT)
         // Include hidden windows too: a secure window must never be discarded by visibility filtering.
@@ -55,26 +58,36 @@ internal object WindowPrivacy {
             displays = windows.map { it.displayId }.distinct().sorted().take(16),
             foreignWindows = scoped.filter { it.ownerUid != fixtureUid }.take(16).flatMap {
                 listOf(it.ownerUid, it.layoutParamsType, it.inputConfig, it.layoutParamsFlags)
-            }
+            },
+            foreignGeometry = scoped.filter { it.ownerUid != fixtureUid }.take(16).flatMap {
+                monitor?.geometry(it) ?: listOf(if (it.token != null) 1 else 0, -1, -1)
+            },
+            monitorProbe = monitorProbe
         )
     }
 
     private class Monitor(private val policy: SystemInputMonitorPolicy, private val contentSize: Field) {
-        fun matches(window: InputWindowHandle): Boolean = try {
-            val size = contentSize.get(window) as? Size
-            policy.matches(
+        fun geometry(window: InputWindowHandle): List<Int> {
+            val size = try {
+                contentSize.get(window) as? Size
+            } catch (_: Exception) {
+                null
+            } catch (_: LinkageError) {
+                null
+            }
+            return listOf(if (window.token != null) 1 else 0, size?.width ?: -1, size?.height ?: -1)
+        }
+        fun matches(window: InputWindowHandle): Boolean {
+            val values = geometry(window)
+            return policy.matches(
                 window.ownerUid,
                 window.layoutParamsType,
                 window.inputConfig,
                 window.layoutParamsFlags,
                 window.token != null,
-                size?.width,
-                size?.height
+                values[1],
+                values[2]
             )
-        } catch (_: Exception) {
-            false
-        } catch (_: LinkageError) {
-            false
         }
     }
 
@@ -82,19 +95,20 @@ internal object WindowPrivacy {
         private val displayId: Int,
         private val fixtureUid: Int,
         private val sinks: SystemInputSinkPolicy,
-        private val monitor: Monitor?
+        private val monitor: Monitor?,
+        private val monitorProbe: String
     ) : WindowInfosListener() {
         val latest = AtomicReference<Result?>()
         val ready = CountDownLatch(1)
         fun initial(windows: Array<InputWindowHandle>) {
-            val summary = summarize(windows, displayId, fixtureUid, sinks, monitor)
+            val summary = summarize(windows, displayId, fixtureUid, sinks, monitor, monitorProbe)
             latest.compareAndSet(null, summary)
         }
         override fun onWindowInfosChanged(
             windows: Array<InputWindowHandle>,
             displays: Array<WindowInfosListener.DisplayInfo>
         ) {
-            val summary = summarize(windows, displayId, fixtureUid, sinks, monitor)
+            val summary = summarize(windows, displayId, fixtureUid, sinks, monitor, monitorProbe)
             latest.set(summary)
             ready.countDown()
         }
@@ -114,31 +128,49 @@ internal object WindowPrivacy {
                 bit("NOT_FOCUSABLE"),
                 bit("NOT_TOUCHABLE")
             )
+            var monitorProbe = "TYPE_SECURE_SYSTEM_OVERLAY"
+            val monitorBits = mutableListOf<Int>()
+            fun monitorBit(name: String): Int {
+                monitorProbe = name
+                return bit(name).also { monitorBits += it }
+            }
             val monitor = try {
+                val type = WindowManager.LayoutParams::class.java.getDeclaredField("TYPE_SECURE_SYSTEM_OVERLAY")
+                    .getInt(null).also { monitorBits += it }
                 val policy = SystemInputMonitorPolicy(
-                    WindowManager.LayoutParams::class.java.getDeclaredField("TYPE_SECURE_SYSTEM_OVERLAY").getInt(null),
-                    bit("NOT_FOCUSABLE"),
-                    bit("SPY"),
-                    bit("TRUSTED_OVERLAY"),
-                    bit("DO_NOT_PILFER"),
-                    bit("DISPLAY_TOPOLOGY_AWARE")
+                    type,
+                    monitorBit("NOT_FOCUSABLE"),
+                    monitorBit("SPY"),
+                    monitorBit("TRUSTED_OVERLAY"),
+                    monitorBit("DO_NOT_PILFER"),
+                    monitorBit("DISPLAY_TOPOLOGY_AWARE")
                 )
-                Monitor(policy, InputWindowHandle::class.java.getDeclaredField("contentSize"))
-            } catch (_: ReflectiveOperationException) {
+                monitorProbe = "contentSize"
+                Monitor(policy, InputWindowHandle::class.java.getDeclaredField("contentSize")).also {
+                    monitorProbe = "ready:${monitorBits.joinToString(",")}"
+                }
+            } catch (failure: ReflectiveOperationException) {
+                monitorProbe += ":" + failure.javaClass.simpleName
                 null
-            } catch (_: IllegalArgumentException) {
+            } catch (failure: IllegalArgumentException) {
+                monitorProbe += ":" + failure.javaClass.simpleName
                 null
-            } catch (_: LinkageError) {
+            } catch (failure: LinkageError) {
+                monitorProbe += ":" + failure.javaClass.simpleName
                 null
             }
-            val listener = Listener(displayId, fixtureUid, sinks, monitor)
+            val listener = Listener(displayId, fixtureUid, sinks, monitor, monitorProbe)
             var registered = false
             try {
                 val initial = listener.register()
                 registered = true
                 listener.initial(requireNotNull(initial.first))
                 // register() returns a process-local cache. Never grant observation from that cache.
-                if (listener.ready.await(200, TimeUnit.MILLISECONDS)) listener.latest.get() ?: Result() else Result()
+                if (listener.ready.await(200, TimeUnit.MILLISECONDS)) {
+                    listener.latest.get() ?: Result(monitorProbe = monitorProbe)
+                } else {
+                    Result(monitorProbe = monitorProbe)
+                }
             } finally {
                 if (registered) listener.unregister()
             }
