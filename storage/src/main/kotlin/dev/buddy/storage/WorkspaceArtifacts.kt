@@ -284,7 +284,10 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
             "application/pdf" to setOf("pdf"),
             "image/png" to setOf("png"),
             "image/jpeg" to setOf("jpg", "jpeg"),
-            "image/webp" to setOf("webp")
+            "image/webp" to setOf("webp"),
+            "image/avif" to setOf("avif"),
+            "image/heic" to setOf("heic", "heif"),
+            "image/heif" to setOf("heic", "heif")
         )
         private fun validateContents(mimeType: String, bytes: ByteArray) {
             fun starts(vararg expected: Int) = bytes.size >= expected.size && expected.indices.all {
@@ -299,6 +302,18 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
                     starts(82, 73, 70, 70) && bytes.size >= 12 &&
                         bytes.copyOfRange(8, 12).contentEquals("WEBP".toByteArray())
                 )
+
+                "image/avif", "image/heic", "image/heif" -> {
+                    require(bytes.size >= 12 && bytes.copyOfRange(4, 8).contentEquals("ftyp".toByteArray()))
+                    val brand = bytes.copyOfRange(8, 12).toString(Charsets.US_ASCII)
+                    require(
+                        brand in if (mimeType == "image/avif") {
+                            setOf("avif", "avis")
+                        } else {
+                            setOf("heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1")
+                        }
+                    )
+                }
 
                 "application/pdf" -> require(starts(37, 80, 68, 70, 45))
 

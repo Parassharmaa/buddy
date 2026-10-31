@@ -26,7 +26,7 @@ class SetupUiTest {
     @Test fun setupNavigationAndLocalScreenshots() {
         compose.onNodeWithText("A little help.\nMore room for you.").assertIsDisplayed()
         screenshot("01-welcome")
-        compose.onNodeWithText("Set up Buddy").performClick()
+        compose.onNodeWithText("Set up Buddy").performScrollTo().performClick()
         compose.onNodeWithText("Models").performClick()
         compose.onNodeWithText("Bring your own model").assertIsDisplayed()
         compose.onNodeWithText("Buddy").assertIsDisplayed()

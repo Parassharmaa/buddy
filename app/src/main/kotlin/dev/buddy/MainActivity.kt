@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.buddy.connection.PhoneConnection
 import dev.buddy.design.BuddyTheme
+import dev.buddy.files.DocumentAccess
 import dev.buddy.ui.BuddyApp
 
 class MainActivity : ComponentActivity() {
@@ -16,7 +17,8 @@ class MainActivity : ComponentActivity() {
         val app = application as BuddyApplication
         setContent {
             BuddyTheme {
-                val model: BuddyViewModel = viewModel { BuddyViewModel(app.store, PhoneConnection(app)) }
+                val model: BuddyViewModel =
+                    viewModel { BuddyViewModel(app.store, PhoneConnection(app), DocumentAccess(app)) }
                 BuddyApp(model)
             }
         }
