@@ -113,7 +113,11 @@ class HelperDeviceTest {
             stage = "verify_window_privacy_metadata"
             val privacy = connected.displayState(lease, token)
             check(privacy.getBoolean("windowMetadataKnown")) {
-                "Window metadata unavailable (status=${privacy.getInt("windowMetadataStatus", -1)})"
+                "Window metadata unavailable (status=${privacy.getInt("windowMetadataStatus", -1)}; " +
+                    "windows=${privacy.getInt(
+                        "windowMetadataCount"
+                    )}; scoped=${privacy.getInt("windowMetadataScopedCount")}; " +
+                    "displays=${privacy.getIntArray("windowMetadataDisplays")?.contentToString()})"
             }
             check(!privacy.getBoolean("secureWindow") && !privacy.getBoolean("mixedWindowOwners"))
             stage = "takeover"

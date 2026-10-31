@@ -198,6 +198,9 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         val privacy = WindowPrivacy.inspect(display.display.display.displayId, display.fixtureUid)
         Bundle().apply {
             putInt("windowMetadataStatus", privacy.status.ordinal)
+            putInt("windowMetadataCount", privacy.windowCount)
+            putInt("windowMetadataScopedCount", privacy.scopedCount)
+            putIntArray("windowMetadataDisplays", privacy.displays.toIntArray())
             putBoolean("windowMetadataKnown", privacy.known)
             putBoolean("secureWindow", privacy.secure)
             putBoolean("mixedWindowOwners", privacy.mixed)
