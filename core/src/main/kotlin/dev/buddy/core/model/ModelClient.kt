@@ -26,7 +26,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
-class ModelClient : java.io.Closeable {
+class ModelClient :
+    ChatModel,
+    java.io.Closeable {
     private val http = OkHttpClient.Builder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -41,10 +43,10 @@ class ModelClient : java.io.Closeable {
         explicitNulls = false
     }
 
-    suspend fun complete(
+    override suspend fun complete(
         config: ModelConfig,
         messages: List<ChatMessage>,
-        tools: List<JsonObject> = emptyList()
+        tools: List<JsonObject>
     ): ModelReply {
         require(config.model.isNotBlank() && config.model.length <= 200)
         val endpoint = ModelEndpoint.parse(config.baseUrl, config.localHttp)
