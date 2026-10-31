@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.text.InputType
@@ -124,6 +125,7 @@ class FixtureScreenService : AccessibilityService() {
             val inputClass = node.inputType and InputType.TYPE_MASK_CLASS
             val variation = node.inputType and InputType.TYPE_MASK_VARIATION
             privateInput = privateInput || node.isPassword ||
+                (Build.VERSION.SDK_INT >= 34 && node.isAccessibilityDataSensitive) ||
                 (
                     inputClass == InputType.TYPE_CLASS_TEXT && variation in setOf(
                         InputType.TYPE_TEXT_VARIATION_PASSWORD,
