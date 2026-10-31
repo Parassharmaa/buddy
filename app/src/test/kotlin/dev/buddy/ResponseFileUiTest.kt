@@ -12,8 +12,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import dev.buddy.core.ChatMessage
 import dev.buddy.design.BuddyTheme
+import dev.buddy.storage.WorkspaceArtifact
 import dev.buddy.ui.Chat
 import java.io.File
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -56,5 +58,29 @@ class ResponseFileUiTest {
         }
         compose.runOnIdle { state.value = state.value.copy(importing = true) }
         compose.onNodeWithText("Save to files").assertIsNotEnabled()
+        compose.runOnIdle {
+            state.value = state.value.copy(
+                importing = false,
+                artifacts = listOf(
+                    WorkspaceArtifact(
+                        UUID.randomUUID().toString(),
+                        initial.conversation.id,
+                        "Buddy response.txt",
+                        "text/plain",
+                        16,
+                        "content://dev.buddy.generated/response/${initial.conversation.id}/1",
+                        1,
+                        responseIndex = 1
+                    )
+                )
+            )
+        }
+        compose.onNodeWithText("Saved to files").assertIsNotEnabled()
+        assertEquals(1, saved.size)
+        compose.onRoot().captureToImage().asAndroidBitmap().let { completed ->
+            File(directory, "14-response-saved.png").outputStream().use { output ->
+                completed.compress(Bitmap.CompressFormat.PNG, 100, output)
+            }
+        }
     }
 }

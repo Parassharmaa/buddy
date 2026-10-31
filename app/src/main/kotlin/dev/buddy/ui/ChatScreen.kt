@@ -157,10 +157,13 @@ import dev.buddy.BuddyState
                         )
                     }
                     if (message.role == "assistant" && !message.content.isNullOrBlank()) {
+                        val saved = state.artifacts.any {
+                            it.workspace == state.conversation.id && it.responseIndex == indexed.index
+                        }
                         TextButton(
                             onClick = { saveResponse(state.conversation.id, indexed.index) },
-                            enabled = state.loaded && !state.active && !state.importing && !state.exporting
-                        ) { Text("Save to files") }
+                            enabled = state.loaded && !state.active && !state.importing && !state.exporting && !saved
+                        ) { Text(if (saved) "Saved to files" else "Save to files") }
                     }
                     if (message.role == "user") {
                         TextButton(onClick = {

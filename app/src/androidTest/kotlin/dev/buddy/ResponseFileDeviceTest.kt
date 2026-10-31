@@ -54,6 +54,8 @@ class ResponseFileDeviceTest {
                 assertEquals(conversation.id, artifact.workspace)
                 assertEquals("text/plain", artifact.mimeType)
                 assertEquals("Buddy response.txt", artifact.displayName)
+                assertEquals(1, requireNotNull(artifact.responseIndex))
+                withContext(Dispatchers.Main) { assertFalse(files.saveResponse(conversation.id, 1)) }
                 val bytes = store.artifacts.read(conversation.id, artifact.id, ArtifactReadBudget())
                 try {
                     assertEquals(text, bytes.decodeToString(throwOnInvalidSequence = true))

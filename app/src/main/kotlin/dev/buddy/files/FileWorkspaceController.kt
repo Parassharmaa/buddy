@@ -77,8 +77,10 @@ internal class FileWorkspaceController(
             fileError("That response is no longer available. Open its conversation again.")
             return false
         }
+        if (_state.value.artifacts.any { it.workspace == conversation.id && it.responseIndex == index }) return false
         val content = requireNotNull(message.content)
         return importSelected(
+            responseIndex = index,
             failureMessage = "The response could not be saved. Check available space and the 8 MiB text limit."
         ) {
             val context = currentCoroutineContext()
@@ -89,6 +91,7 @@ internal class FileWorkspaceController(
     }
 
     private fun importSelected(
+        responseIndex: Int? = null,
         failureMessage: String = "This file could not be imported. Check its type and available space. " +
             "Files can be up to 8 MiB; JSON up to 256 KiB.",
         read: suspend () -> Pair<Uri, SelectedDocument>
@@ -107,7 +110,14 @@ internal class FileWorkspaceController(
                         persistence.withLock {
                             store.put("conversation:${saved.id}", "conversation", json.encodeToString(saved))
                         }
-                        store.artifacts.importFile(saved.id, selected.name, selected.mimeType, uri, selected.bytes)
+                        store.artifacts.importFile(
+                            saved.id,
+                            selected.name,
+                            selected.mimeType,
+                            uri,
+                            selected.bytes,
+                            responseIndex = responseIndex
+                        )
                         val files = store.artifacts.list(saved.id)
                         currentCoroutineContext().ensureActive()
                         _state.update {
