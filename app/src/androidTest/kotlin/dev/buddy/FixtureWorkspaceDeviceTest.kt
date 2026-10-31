@@ -229,7 +229,7 @@ class FixtureWorkspaceDeviceTest {
                             val send = workspace.prepareSend(drafted)
                             stage = "approval_required"
                             assertEquals(ExecutionResult.ApprovalRequired, workspace.execute(send, gate = { gate() }))
-                            assertTrue(workspace.observe().nodes.any { it.label == "Nothing sent" })
+                            ready { it.nodes.any { node -> node.label == "Nothing sent" } }
                             val action = send.proposal
                             val approval = Approval(
                                 UUID.randomUUID().toString(),
@@ -281,7 +281,7 @@ class FixtureWorkspaceDeviceTest {
                             }
                             val protectedResult = workspace.execute(protectedPage, gate = { gate() })
                             assertTrue("Protected page: $protectedResult", protectedResult is ExecutionResult.Verified)
-                            val suppressed = workspace.observe()
+                            val suppressed = ready { it.nodes.isEmpty() && (it.protected || it.credentialSurface) }
                             assertTrue(suppressed.nodes.isEmpty())
                             if (secureOnly) {
                                 assertTrue(suppressed.protected && !suppressed.credentialSurface)

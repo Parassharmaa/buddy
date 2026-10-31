@@ -19,7 +19,6 @@ import dev.buddy.core.ObservationPrivacyGate
 import dev.buddy.core.UiElement
 import dev.buddy.core.sha256
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicLong
 
 internal const val FIXTURE_PACKAGE = "dev.buddy.fixture"
 internal class FixtureScreenChanged : IllegalStateException("Fixture changed during observation")
@@ -73,7 +72,7 @@ internal fun fixtureFingerprint(nodes: List<UiElement>): String = sha256(
 )
 
 class FixtureScreenService : AccessibilityService() {
-    private val revision = AtomicLong()
+    private val revisions = DisplayRevisions()
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = serviceInfo.apply {
@@ -83,15 +82,27 @@ class FixtureScreenService : AccessibilityService() {
         // Window-change events have no fixture package. Filtering them by package can leave
         // a newly created display absent from the framework cache. Fetch owned windows fresh.
         setCacheEnabled(false)
-        revision.incrementAndGet()
+        revisions.changed()
         current = this
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Inspect event metadata only, never text or source from another app.
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED || event?.packageName == FIXTURE_PACKAGE) {
-            revision.incrementAndGet()
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            revisions.changed()
+        } else if (event?.packageName == FIXTURE_PACKAGE) {
+            val display = runCatching {
+                val windows = windowsOnAllDisplays
+                (0 until windows.size()).mapNotNull { index ->
+                    val candidate = windows.keyAt(index)
+                    candidate.takeIf {
+                        windows.valueAt(index).any { it.id == event.windowId && it.displayId == candidate }
+                    }
+                }.singleOrNull()
+            }.getOrNull()
+            revisions.changed(display)
         }
     }
+
     override fun onInterrupt() {
         if (current === this) current = null
     }
@@ -106,7 +117,7 @@ class FixtureScreenService : AccessibilityService() {
 
     private fun snapshot(scope: FixtureDisplayScope, privacy: FixtureWindowPrivacy): FixtureSnapshot {
         check(getSystemService(DisplayManager::class.java).getDisplay(scope.displayId)?.isValid == true)
-        val startRevision = revision.get()
+        val startRevision = revisions.current(scope.displayId)
         if (!privacy.known || privacy.secure || privacy.mixed) {
             lastWindowSummary =
                 "metadata suppressed; status=${privacy.status}; known=${privacy.known}; " +
@@ -178,7 +189,7 @@ class FixtureScreenService : AccessibilityService() {
                 )
             }
         }
-        if (startRevision != revision.get()) throw FixtureScreenChanged()
+        if (startRevision != revisions.current(scope.displayId)) throw FixtureScreenChanged()
         val safeElements = if (excluded || privateInput) emptyList() else elements
         val fingerprint = fixtureFingerprint(safeElements)
         val observation = Observation(
