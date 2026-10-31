@@ -113,8 +113,22 @@ import dev.buddy.storage.WorkspaceArtifact
                         "${artifact.mimeType} · ${(artifact.bytes + 1023) / 1024} KiB",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (artifact.mimeType == "application/pdf" && android.os.Build.VERSION.SDK_INT < 35) {
+                        Text(
+                            "PDF text previews require Android 15 or later.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (artifact.mimeType == "application/pdf" && android.os.Build.VERSION.SDK_INT >= 35) {
+                        Text(
+                            "PDF previews use selectable text. Scans and protected files need another reader.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (artifact.mimeType in setOf("text/plain", "text/markdown", "application/json")) {
+                        if (artifact.mimeType in setOf("text/plain", "text/markdown", "application/json") ||
+                            (artifact.mimeType == "application/pdf" && android.os.Build.VERSION.SDK_INT >= 35)
+                        ) {
                             TextButton(onClick = { model.sources.file(artifact.id) }, enabled = !busy) {
                                 Text("Use with model")
                             }

@@ -77,7 +77,7 @@ class ArtifactProvider : ContentProvider() {
         if (mode != "r") throw FileNotFoundException("Read only")
         val ticket = PrivateFileDescriptors.ticket()
         val artifact = metadata(uri)
-        val handle = PrivateFileDescriptors.reserve(artifact.bytes.toInt(), ticket)
+        val handle = PrivateFileDescriptors.reserve(artifact.bytes, ticket)
         try {
             val data = runBlocking(Dispatchers.IO) {
                 (requireNotNull(context).applicationContext as BuddyApplication).store.artifacts.read(
