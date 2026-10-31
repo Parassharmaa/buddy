@@ -1,0 +1,3 @@
+[submodule "pairing-native/boringssl"]
+	path = pairing-native/boringssl
+	url = https://github.com/google/boringssl.git

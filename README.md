@@ -1,9 +1,13 @@
 # Buddy
 
-Buddy is a proposed Android AI assistant that operates apps on a background virtual display while the user continues using the phone. It uses a built-in local wireless ADB connection to start its own privileged helper, with no external privilege-manager dependency.
+Kotlin Android assistant. Requirements: [spec.md](spec.md).
 
-The complete product requirements, Android architecture and API research, modern UI/UX design, security model, acceptance criteria, and phased implementation plan are in **[spec.md](spec.md)**.
+Build with JDK 27, SDK 37.2, build-tools 37.0.0, NDK 30.0.16248370 and CMake 4.1.2:
 
-This repository currently contains planning documents. It does not yet contain an Android implementation or an installable APK.
+```sh
+git submodule update --init --recursive
+bash scripts/check-native.sh
+./gradlew lintKotlin :core:test :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug lintDebug
+```
 
-The initial design targets Android 13+, recommends Android 14+, and plans signed direct-APK distribution for the full agent. Platform compatibility and release requirements are defined in the specification.
+Development build; phone control requires device qualification. Screenshots and local device logs belong in ignored `captures/`.

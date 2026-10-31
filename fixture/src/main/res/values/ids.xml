@@ -1,0 +1,9 @@
+<resources>
+    <item name="fixture_draft_input" type="id" />
+    <item name="fixture_send_button" type="id" />
+    <item name="fixture_result" type="id" />
+    <item name="fixture_protected_button" type="id" />
+    <item name="fixture_password_input" type="id" />
+    <item name="fixture_credential_button" type="id" />
+    <item name="fixture_secure_button" type="id" />
+</resources>

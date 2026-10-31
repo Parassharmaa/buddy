@@ -1,0 +1,6 @@
+# Pinned native cryptography; upstream licenses are in the submodule.
+[boringssl]
+repository = "https://github.com/google/boringssl"
+revision = "95f9e9f22f23f429c441c93d476ea52ee05b25e0"
+license = "Apache-2.0 AND ISC AND OpenSSL"
+modifications = []

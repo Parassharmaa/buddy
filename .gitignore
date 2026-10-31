@@ -19,3 +19,7 @@ credentials.json
 # Local research and operating system files
 research-cache/
 .DS_Store
+
+.kotlin/
+__pycache__/
+*.py[cod]
