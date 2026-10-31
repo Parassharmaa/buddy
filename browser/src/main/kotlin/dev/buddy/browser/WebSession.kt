@@ -94,6 +94,11 @@ class WebSession(context: Context) : WebPort {
     fun detach() {
         mainThread()
         if (closed || !attached) return
+        if (!_state.value.canMute) {
+            // Old providers cannot guarantee audio suppression when a page loses user control.
+            close()
+            return
+        }
         attached = false
         userVisible = false
         beforePause = _state.value.status
@@ -107,12 +112,12 @@ class WebSession(context: Context) : WebPort {
         wrapper.baseContext = application
         if (!closed) _state.value = _state.value.copy(status = WebStatus.PAUSED, soundAllowed = false)
     }
-    fun resume() {
+    fun resume(userControl: Boolean = true) {
         mainThread()
         val current = view ?: return
         if (closed || !current.isAttachedToWindow || attached) return
         attached = true
-        userVisible = true
+        userVisible = userControl
         current.onResume()
         current.resumeTimers()
         if (_state.value.status == WebStatus.PAUSED) _state.value = _state.value.copy(status = beforePause)
@@ -197,7 +202,8 @@ class WebSession(context: Context) : WebPort {
         if (!current.isAttachedToWindow || current.width <= 0 || current.height <= 0) {
             return@withContext WebReadResult.Suppressed(WebReadStatus.STALE)
         }
-        val address = current.url?.let { runCatching { WebAddress.parse(it) }.getOrNull() }
+        val observedUrl = current.url
+        val address = observedUrl?.let { runCatching { WebAddress.parse(it) }.getOrNull() }
             ?: return@withContext WebReadResult.Suppressed(WebReadStatus.STALE)
         if (address.origin != expectedOrigin || credentialRoute(address.url)) {
             return@withContext WebReadResult.Suppressed(WebReadStatus.PRIVATE)
@@ -210,7 +216,7 @@ class WebSession(context: Context) : WebPort {
                 }
             }
         }
-        if (closed || ticket != generation || !attached || current.url != address.url) {
+        if (closed || ticket != generation || !attached || current.url != observedUrl) {
             return@withContext WebReadResult.Suppressed(WebReadStatus.STALE)
         }
         runCatching {

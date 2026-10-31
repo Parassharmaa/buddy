@@ -54,6 +54,12 @@ private enum class Destination(val label: String) {
 }
 
 @Composable fun BuddyApp(model: BuddyViewModel) {
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+        model.browser.foreground(false)
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_START) {
+        model.browser.foreground(true)
+    }
     val state by model.state.collectAsStateWithLifecycle()
     var destination by rememberSaveable { mutableStateOf(Destination.CHAT) }
     val expanded = currentWindowAdaptiveInfoV2().windowSizeClass.isWidthAtLeastBreakpoint(840)

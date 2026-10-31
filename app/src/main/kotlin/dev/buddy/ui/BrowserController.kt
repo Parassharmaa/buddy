@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.view.View
 import android.webkit.WebView
+import dev.buddy.browser.PrivateWebHost
 import dev.buddy.browser.WebAddress
 import dev.buddy.browser.WebReadResult
 import dev.buddy.browser.WebSession
@@ -33,6 +34,9 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     private var collector: Job? = null
     private var reader: Job? = null
     private var pending: WebAddress? = null
+    private var privateHost: PrivateWebHost? = null
+    private var foreground = true
+    private var showing = false
     private val _state = MutableStateFlow(BrowserPanelState())
     val state = _state.asStateFlow()
 
@@ -45,7 +49,13 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
             session = created
             collector = scope.launch {
                 created.state.collect { value ->
-                    if (session === created) _state.update { it.copy(web = value, hasSession = true) }
+                    if (session === created) {
+                        if (created.isClosed) {
+                            privateHost?.close()
+                            privateHost = null
+                        }
+                        _state.update { it.copy(web = value, hasSession = !created.isClosed) }
+                    }
                 }
             }
         }
@@ -73,7 +83,10 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     }
     fun attach(context: Context): WebView {
         val current = ensure(context)
+        showing = true
         return current.attach(context).also { view ->
+            privateHost?.close()
+            privateHost = null
             if (view.isAttachedToWindow) {
                 loadPending()
             } else {
@@ -93,11 +106,33 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
         session?.navigate(address)
     }
     fun detach() {
+        showing = false
         reader?.cancel()
-        session?.detach()
+        val current = session ?: return
+        if (foreground && !current.isClosed && current.state.value.canMute &&
+            current.state.value.address.isNotEmpty()
+        ) {
+            try {
+                val host = privateHost ?: PrivateWebHost.create(requireNotNull(application)).also { privateHost = it }
+                host.park(current)
+            } catch (_: Exception) {
+                privateHost?.close()
+                privateHost = null
+                current.detach()
+                _state.update { it.copy(error = "This device paused the page. Open Browser to continue.") }
+            }
+        } else {
+            current.detach()
+        }
     }
-    fun resume() {
-        session?.resume()
+    fun foreground(active: Boolean) {
+        foreground = active
+        if (!active) {
+            reader?.cancel()
+            session?.detach()
+            return
+        }
+        session?.resume(userControl = showing)
         if (session?.hasWindow == true) loadPending()
     }
     fun allowNavigation() {
@@ -145,6 +180,8 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     fun close() {
         reader?.cancel()
         collector?.cancel()
+        privateHost?.close()
+        privateHost = null
         session?.close()
         session = null
         pending = null
@@ -154,6 +191,8 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
         reader?.cancel()
         reader?.join()
         collector?.cancel()
+        privateHost?.close()
+        privateHost = null
         val current = session ?: application?.let(::WebSession)
         session = null
         pending = null

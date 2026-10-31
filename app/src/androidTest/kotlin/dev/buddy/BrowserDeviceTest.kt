@@ -3,6 +3,7 @@ package dev.buddy
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.buddy.browser.PrivateWebHost
 import dev.buddy.browser.WebAddress
 import dev.buddy.browser.WebReadResult
 import dev.buddy.browser.WebReadStatus
@@ -149,6 +150,60 @@ class BrowserDeviceTest {
             assertTrue(activity.session.observe(pages.origin) is WebReadResult.Allowed)
             withContext(Dispatchers.Main) { activity.session.excludeOrigin(pages.origin) }
             assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
+        }
+    }
+
+    @Test(timeout = 45_000)
+    fun privateDisplayRendersResizesAndHandsTheSameViewBackWithoutThePhoneHelper() = runBlocking {
+        withBrowser { activity, pages ->
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+            val view = withContext(Dispatchers.Main) {
+                (activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup)
+                    .getChildAt(0) as android.webkit.WebView
+            }
+            val host = withContext(Dispatchers.Main) {
+                PrivateWebHost.create(activity).also { it.park(activity.session) }
+            }
+            try {
+                withTimeout(5_000) {
+                    while (!withContext(Dispatchers.Main) { view.width == 720 && view.height == 1280 }) delay(20)
+                    while (host.renderedFrames == 0L) delay(20)
+                }
+                withContext(Dispatchers.Main) {
+                    assertTrue(view.display.flags and android.view.Display.FLAG_PRIVATE != 0)
+                    assertFalse(activity.session.state.value.soundAllowed)
+                    host.resize(480, 800)
+                }
+                withTimeout(5_000) {
+                    while (!withContext(Dispatchers.Main) { view.width == 480 && view.height == 800 }) delay(20)
+                }
+                assertTrue(activity.session.observe(pages.origin) is WebReadResult.Allowed)
+                withContext(Dispatchers.Main) {
+                    assertTrue(view === activity.session.attach(activity))
+                    activity.setContentView(view)
+                    host.close()
+                }
+                assertTrue(activity.session.observe(pages.origin) is WebReadResult.Allowed)
+            } finally {
+                withContext(Dispatchers.Main) { host.close() }
+            }
+        }
+    }
+
+    @Test(timeout = 45_000)
+    fun rendererTerminationEndsTheSessionWithoutReloadingOrReplayingThePage() = runBlocking {
+        withBrowser { activity, pages ->
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+            withContext(Dispatchers.Main) {
+                val content = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                val view = content.getChildAt(0) as android.webkit.WebView
+                assertTrue(requireNotNull(view.webViewRenderProcess).terminate())
+            }
+            withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.RENDERER_GONE } }
+            assertTrue(activity.session.isClosed)
+            assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
+            delay(250)
+            assertEquals(WebStatus.RENDERER_GONE, activity.session.state.value.status)
         }
     }
 }

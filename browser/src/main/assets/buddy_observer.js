@@ -15,6 +15,7 @@
   const value = uncurry(descriptor(Node.prototype, 'nodeValue').get);
   const body = uncurry(descriptor(Document.prototype, 'body').get);
   const title = uncurry(descriptor(Document.prototype, 'title').get);
+  const visibility = uncurry(descriptor(Document.prototype, 'visibilityState').get);
   const walker = uncurry(Document.prototype.createTreeWalker);
   const next = uncurry(TreeWalker.prototype.nextNode);
   const style = root.getComputedStyle.bind(root);
@@ -44,6 +45,7 @@
     return width(bounds) > 0 && height(bounds) > 0;
   }
   function observe() {
+    if (visibility(doc) !== 'visible') return '{"status":"unsupported"}';
     const elements = all(doc, '*');
     const length = count(elements);
     if (length > 2000) return '{"status":"unsupported"}';

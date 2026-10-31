@@ -48,8 +48,6 @@ import dev.buddy.browser.WebStatus
 import dev.buddy.storage.WorkspaceArtifact
 
 @Composable internal fun BrowserScreen(controller: BrowserController, files: List<WorkspaceArtifact>) {
-    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_STOP) { controller.detach() }
-    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_START) { controller.resume() }
     val state by controller.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var address by remember { mutableStateOf(state.web.address) }
