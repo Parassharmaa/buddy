@@ -144,7 +144,7 @@ class ChatRecoveryDeviceTest {
         }
     }
 
-    @Test fun deletingRecoveredHistoryCannotRestoreOldRowsAndKeepsObservationAlive() = runBlocking {
+    @Test fun deletingRecoveredHistoryCannotRestoreOldRowsAndKeepsObservationAlive() = runBlocking<Unit> {
         requireDisposableEmulator()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val models = ViewModelStore()

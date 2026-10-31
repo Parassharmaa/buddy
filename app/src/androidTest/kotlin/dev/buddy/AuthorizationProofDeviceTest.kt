@@ -39,7 +39,7 @@ import org.junit.runner.RunWith
 // still require the separate wireless transport probe and physical-device qualification.
 @RunWith(AndroidJUnit4::class)
 class AuthorizationProofDeviceTest {
-    @Test fun ownerProcessDeathReleasesTheDisplayWithoutKillingTheMainAppOrHelper() = runBlocking {
+    @Test fun ownerProcessDeathReleasesTheDisplayWithoutKillingTheMainAppOrHelper() = runBlocking<Unit> {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
