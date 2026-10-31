@@ -2,8 +2,11 @@ package dev.buddy
 
 import android.app.KeyguardManager
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Binder
 import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
@@ -14,6 +17,7 @@ import dev.buddy.adb.BootstrapCommand
 import dev.buddy.connection.BootstrapProvider
 import dev.buddy.shell.ShellProtocol
 import java.security.SecureRandom
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -27,6 +31,44 @@ import org.junit.runner.RunWith
 // still require the separate wireless transport probe and physical-device qualification.
 @RunWith(AndroidJUnit4::class)
 class AuthorizationProofDeviceTest {
+    @Test fun helperTerminationReleasesItsDisplayWhileTheAppRemainsAlive() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
+        assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val automation = instrumentation.uiAutomation
+        AuthenticatedHelperFixture.start(context, automation).use { fixture ->
+            FixtureFrameSink().use { frames ->
+                val helper = fixture.helper
+                val owner = Binder()
+                val lease = requireNotNull(
+                    helper.acquireLease(owner, ByteArray(32).also(SecureRandom()::nextBytes)).getString("lease")
+                )
+                val token = helper.createDisplay(lease, 720, 1280, 240, frames.surface)
+                val display = helper.displayState(lease, token).getInt("displayId")
+                val helperPid = helper.capabilities().getInt("helperPid")
+                check(helperPid > 1 && helperPid != android.os.Process.myPid())
+                val binder = helper.asBinder()
+                val died = CompletableDeferred<Unit>()
+                val death = IBinder.DeathRecipient { died.complete(Unit) }
+                binder.linkToDeath(death, 0)
+                try {
+                    ParcelFileDescriptor.AutoCloseInputStream(
+                        automation.executeShellCommand("kill -KILL $helperPid")
+                    ).use { it.readNBytes(512) }
+                    withTimeout(5_000) {
+                        died.await()
+                        val manager = context.getSystemService(DisplayManager::class.java)
+                        while (manager.getDisplay(display)?.isValid == true) delay(25)
+                    }
+                    assertTrue(!binder.isBinderAlive && owner.isBinderAlive)
+                } finally {
+                    runCatching { binder.unlinkToDeath(death, 0) }
+                }
+            }
+        }
+    }
+
     @Test fun screenOffRejectsOwnedDisplayAccessUntilTheUserReturns() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
@@ -120,6 +162,19 @@ class AuthorizationProofDeviceTest {
             try {
                 helper.prepareAuthorization(challenge)
                 assertThrows(IllegalStateException::class.java) { helper.completeAuthorization(challenge) }
+                val rejected = runCatching {
+                    context.contentResolver.call(
+                        Uri.parse("content://${context.packageName}${ShellProtocol.AUTHORITY_SUFFIX}"),
+                        ShellProtocol.REVALIDATE,
+                        null,
+                        Bundle().apply {
+                            putInt("protocol", ShellProtocol.VERSION)
+                            putByteArray("nonce", challenge)
+                        }
+                    )
+                }.exceptionOrNull()
+                assertTrue(rejected is IllegalStateException || rejected is SecurityException)
+                assertTrue(!pending.result.isCompleted)
                 delay(100)
                 ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1]).use {
                     it.write((Base64.encodeToString(challenge, Base64.NO_WRAP) + "\n").toByteArray())
