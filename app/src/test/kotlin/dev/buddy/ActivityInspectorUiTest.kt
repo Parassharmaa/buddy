@@ -1,6 +1,8 @@
 package dev.buddy
 
 import android.graphics.Bitmap
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
@@ -47,7 +49,11 @@ class ActivityInspectorUiTest {
         )
         val history = mutableStateOf(listOf(conversation))
         var opened: String? = null
-        compose.setContent { BuddyTheme { Activity(history.value) { opened = it } } }
+        var back: OnBackPressedDispatcher? = null
+        compose.setContent {
+            back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+            BuddyTheme { Activity(history.value) { opened = it } }
+        }
         compose.onNodeWithText("View task history").performClick()
         compose.onNodeWithText("Outcome unknown").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Effect not verified").assertIsDisplayed()
@@ -59,6 +65,9 @@ class ActivityInspectorUiTest {
         File(directory, "12-task-history.png").outputStream().use { output ->
             bitmap.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output)
         }
+        compose.runOnIdle { requireNotNull(back).onBackPressed() }
+        compose.onNodeWithText("View task history").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Outcome unknown").performScrollTo().assertIsDisplayed()
         compose.runOnIdle { history.value = emptyList() }
         compose.onNodeWithText("A clear record of what happened.").assertIsDisplayed()
         compose.onNodeWithText("Synthetic request").assertDoesNotExist()

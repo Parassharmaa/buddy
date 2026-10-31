@@ -1,5 +1,6 @@
 package dev.buddy.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import java.util.Date
 @Composable internal fun Activity(history: List<Conversation>, open: (String) -> Unit) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = history.firstOrNull { it.id == selectedId }
+    BackHandler(enabled = selected != null) { selectedId = null }
     LazyColumn(
         Modifier.widthIn(max = 760.dp).fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
