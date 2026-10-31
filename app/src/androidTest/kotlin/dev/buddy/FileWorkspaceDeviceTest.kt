@@ -28,6 +28,8 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FileWorkspaceDeviceTest {
+    private enum class Stage { SOURCE, IMPORT, REOPEN, SHARE, EXPORT, REMOVE }
+
     @Test(timeout = 20_000)
     fun cancellingAStalledSelectionCannotRestoreFilesAfterOpeningANewConversation() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
@@ -105,6 +107,7 @@ class FileWorkspaceDeviceTest {
             )
         ).also { created += it }
         store.clear()
+        var stage = Stage.SOURCE
         try {
             val source = destination("buddy-synthetic-source.txt")
             documents.write(source, bytes)
@@ -113,21 +116,27 @@ class FileWorkspaceDeviceTest {
                 BuddyViewModel(store, PhoneConnection(context), documents).also { models.put("files", it) }
             }
             withTimeout(5_000) { model.state.first { it.loaded } }
-            withContext(Dispatchers.Main) { model.importDocument(source) }
-            val imported = withTimeout(10_000) {
-                model.state.first { !it.importing && it.artifacts.size == 1 }
+            stage = Stage.IMPORT
+            withContext(Dispatchers.Main) {
+                model.importDocument(source)
+                check(model.state.value.importing) { "Import was not admitted" }
             }
-            assertEquals(null, imported.error)
+            val imported = withTimeout(10_000) {
+                model.state.first { !it.importing && (it.artifacts.size == 1 || it.error != null) }
+            }
+            check(imported.error == null) { "Import was rejected" }
             val artifact = imported.artifacts.single()
             assertEquals(bytes.size, artifact.bytes)
             assertArrayEquals(bytes, store.artifacts.read(artifact.workspace, artifact.id, ArtifactReadBudget()))
             assertTrue(imported.conversation.messages.isEmpty())
+            stage = Stage.REOPEN
             withTimeout(5_000) { model.state.first { state -> state.history.any { it.id == artifact.workspace } } }
             withContext(Dispatchers.Main) {
                 model.newChat()
                 model.openConversation(artifact.workspace)
             }
             withTimeout(5_000) { model.state.first { it.artifacts.any { file -> file.id == artifact.id } } }
+            stage = Stage.SHARE
             val shared = Uri.Builder().scheme("content").authority(context.packageName + ".artifacts")
                 .appendPath(artifact.workspace).appendPath(artifact.id).build()
             assertEquals("text/plain", resolver.getType(shared))
@@ -140,24 +149,25 @@ class FileWorkspaceDeviceTest {
             // Recipients can abandon a read while the producer is writing a larger-than-pipe payload.
             requireNotNull(resolver.openInputStream(shared)).use { assertTrue(it.read() >= 0) }
             assertTrue(runCatching { resolver.openFileDescriptor(shared, "w")?.close() }.isFailure)
+            stage = Stage.EXPORT
             val exported = destination("buddy-synthetic-export.txt")
-            withContext(Dispatchers.Main) { model.exportArtifact(artifact.id, exported) }
-            withTimeout(10_000) {
-                while (true) {
-                    val size = resolver.query(exported, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
-                        if (it.moveToFirst()) it.getLong(0) else 0L
-                    }
-                    if (!model.state.value.exporting && size == bytes.size.toLong()) break
-                    delay(50)
-                }
+            withContext(Dispatchers.Main) {
+                model.exportArtifact(artifact.id, exported)
+                check(model.state.value.exporting) { "Export was not admitted" }
             }
-            assertEquals(null, model.state.value.error)
+            withTimeout(10_000) { model.state.first { !it.exporting } }
+            check(model.state.value.error == null) { "Export was rejected" }
+            // The fixture owns this MediaStore pending row; publication updates its cached size.
+            resolver.update(exported, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
             assertArrayEquals(bytes, requireNotNull(resolver.openInputStream(exported)).use { it.readBytes() })
+            stage = Stage.REMOVE
             withContext(Dispatchers.Main) { model.removeArtifact(artifact.id) }
             withTimeout(5_000) { model.state.first { !it.importing && it.artifacts.isEmpty() } }
             assertFalse(store.artifacts.list(artifact.workspace).any { it.id == artifact.id })
             assertTrue(runCatching { resolver.openInputStream(shared)?.close() }.isFailure)
             assertTrue(store.get("conversation:${artifact.workspace}") != null)
+        } catch (failure: Throwable) {
+            throw AssertionError("File workspace failed at $stage", failure)
         } finally {
             withContext(Dispatchers.Main) { models.clear() }
             created.forEach { resolver.delete(it, null, null) }
