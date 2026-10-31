@@ -1,6 +1,10 @@
 package dev.buddy.core
 
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -72,5 +76,23 @@ class StreamingReplyTest {
         assertThrows(IllegalArgumentException::class.java) {
             parser.accept("""{"choices":[],"usage":{"total_tokens":90}}""")
         }
+    }
+
+    @Test fun excessiveProviderNestingIsRejectedWithoutEchoingResponseContents() {
+        val secret = "PRIVATE_PROVIDER_FIXTURE"
+        val nested = "[".repeat(1000) + "0" + "]".repeat(1000)
+        val response = """{"private":"$secret","padding":$nested,"choices":[]}"""
+        val failure = assertThrows(SerializationException::class.java) { StreamingReply().accept(response) }
+        assertFalse(failure.message.orEmpty().contains(secret))
+    }
+
+    @Test fun deeplyNestedToolArgumentsAreRejectedAfterReassembly() {
+        val arguments = "{\"data\":" + "[".repeat(100) + "0" + "]".repeat(100) + "}"
+        val encoded = Json.encodeToString(JsonPrimitive.serializer(), JsonPrimitive(arguments))
+        val parser = StreamingReply()
+        parser.accept(
+            """{"choices":[{"message":{"tool_calls":[{"id":"a","function":{"name":"read","arguments":$encoded}}]},"finish_reason":"tool_calls"}]}"""
+        )
+        assertThrows(SerializationException::class.java) { parser.finish() }
     }
 }

@@ -765,4 +765,26 @@ class AgentRunnerTest {
         assertEquals(listOf("o2"), verified?.evidenceIds)
         assertEquals(listOf("Also verify the manual step"), result.userUpdates)
     }
+
+    @Test fun deepArgumentsFromAnAdapterNeverPrepareToolsOrEchoTheirContents() = runTest {
+        var prepared = 0
+        val read = tool {
+            prepared++
+            AgentInvocation.Read { observation }
+        }
+        val arguments = "{\"data\":" + "[".repeat(100) + "0" + "]".repeat(100) + "}"
+        val model = Model {
+            val reply = calls("observe")
+            reply.copy(
+                message = reply.message.copy(
+                    toolCalls = reply.message.toolCalls!!.map { call ->
+                        call.copy(function = call.function.copy(arguments = arguments))
+                    }
+                )
+            )
+        }
+        val result = runner(model, listOf(read)).run(request, config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertEquals(0, prepared)
+    }
 }

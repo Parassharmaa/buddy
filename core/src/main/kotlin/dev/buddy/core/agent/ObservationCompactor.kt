@@ -1,6 +1,7 @@
 package dev.buddy.core.agent
 
 import dev.buddy.core.ChatMessage
+import dev.buddy.core.modelJson
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -16,7 +17,7 @@ internal object ObservationCompactor {
     fun compact(messages: List<ChatMessage>): Result {
         val candidates = messages.mapIndexedNotNull { index, message ->
             if (message.role != "tool") return@mapIndexedNotNull null
-            val value = runCatching { Json.parseToJsonElement(message.content.orEmpty()).jsonObject }.getOrNull()
+            val value = runCatching { modelJson.parseToJsonElement(message.content.orEmpty()).jsonObject }.getOrNull()
                 ?: return@mapIndexedNotNull null
             if (value["status"]?.jsonPrimitive?.contentOrNull != "observed" ||
                 value["kind"]?.jsonPrimitive?.contentOrNull != "observation" || value["data"] !is JsonObject

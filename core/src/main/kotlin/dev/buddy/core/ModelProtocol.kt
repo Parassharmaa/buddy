@@ -50,7 +50,7 @@ class StreamingReply {
     private val calls = sortedMapOf<Int, Call>()
     private var reason: String? = null
     private var tokens: Int? = null
-    private val json = Json
+    private val json = modelJson
     fun accept(payload: String) {
         val chunk = json.parseToJsonElement(payload).jsonObject
         (chunk["usage"] as? JsonObject)?.get("total_tokens")?.takeUnless { it == JsonNull }?.let { value ->

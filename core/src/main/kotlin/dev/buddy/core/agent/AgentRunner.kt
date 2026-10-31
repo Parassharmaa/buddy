@@ -15,6 +15,7 @@ import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.ToolCall
 import dev.buddy.core.model.ChatModel
+import dev.buddy.core.modelJson
 import dev.buddy.core.sha256
 import kotlin.math.min
 import kotlinx.coroutines.CancellationException
@@ -53,10 +54,7 @@ class AgentRunner(
 ) {
     private val lock = Mutex()
     private val tools = tools.associateBy { it.name }
-    private val json = Json {
-        encodeDefaults = true
-        explicitNulls = false
-    }
+    private val json = modelJson
     private val definitions: List<JsonObject>
     init {
         require(tools.size <= 32 && this.tools.size == tools.size)
@@ -519,31 +517,8 @@ class AgentRunner(
                     if (response.finishReason != "tool_calls") {
                         return finish(RunState.BLOCKED, "Incomplete tool response; no action from it was dispatched")
                     }
-                    val arguments = linkedMapOf<String, JsonObject>()
-                    val valid = try {
-                        require(
-                            calls.count {
-                                tools[it.function.name]?.effect?.let { effect -> effect != Effect.READ } == true
-                            } <=
-                                1
-                        )
-                        require(calls.none { it.function.name == "end_task" } || calls.size == 1)
-                        calls.forEach { call ->
-                            val value = json.parseToJsonElement(call.function.arguments).jsonObject
-                            if (call.function.name == "end_task") {
-                                validateCompletion(value)
-                            } else {
-                                requireNotNull(tools[call.function.name]).validate(value)
-                            }
-                            arguments[call.id] = value
-                        }
-                        true
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        false
-                    }
-                    if (!valid) {
+                    val arguments = validateArguments(calls)
+                    if (arguments == null) {
                         calls.forEach {
                             reply(
                                 it.id,
@@ -686,6 +661,24 @@ class AgentRunner(
                 return checkpoint
             }
         }
+    }
+
+    private fun validateArguments(calls: List<ToolCall>): Map<String, JsonObject>? = try {
+        require(calls.count { tools[it.function.name]?.effect?.let { effect -> effect != Effect.READ } == true } <= 1)
+        require(calls.none { it.function.name == "end_task" } || calls.size == 1)
+        calls.associate { call ->
+            val value = json.parseToJsonElement(call.function.arguments).jsonObject
+            if (call.function.name == "end_task") {
+                validateCompletion(value)
+            } else {
+                requireNotNull(tools[call.function.name]).validate(value)
+            }
+            call.id to value
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
     }
 
     private fun validateCompletion(value: JsonObject) {

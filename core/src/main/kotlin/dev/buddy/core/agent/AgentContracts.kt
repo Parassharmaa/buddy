@@ -65,7 +65,9 @@ data class AgentCompletion(
     val updates: List<String>,
     val claimedOutcome: String,
     val evidenceIds: List<String>
-)
+) {
+    override fun toString(): String = "AgentCompletion(redacted)"
+}
 
 class AgentDispatchContext internal constructor(val approval: Approval?, private val current: () -> Boolean) {
     // The adapter must check this again in ActionExecutor's final dispatch gate.

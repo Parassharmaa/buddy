@@ -6,6 +6,7 @@ import dev.buddy.core.ModelEndpoint
 import dev.buddy.core.ModelFailure
 import dev.buddy.core.ModelReply
 import dev.buddy.core.StreamingReply
+import dev.buddy.core.modelJson
 import java.io.FilterInputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -37,11 +38,7 @@ class ModelClient :
         .readTimeout(60, TimeUnit.SECONDS)
         .callTimeout(90, TimeUnit.SECONDS)
         .build()
-    private val json = Json {
-        // ToolCall.type defaults to "function" but is mandatory in provider requests.
-        encodeDefaults = true
-        explicitNulls = false
-    }
+    private val json = modelJson
 
     override suspend fun complete(
         config: ModelConfig,
@@ -143,7 +140,7 @@ class ModelClient :
     }
 
     suspend fun probe(config: ModelConfig): String {
-        val schema = Json.parseToJsonElement(
+        val schema = json.parseToJsonElement(
             """{"type":"function","function":{"name":"buddy_probe","description":"Return this harmless setup token","parameters":{"type":"object","properties":{"echo":{"type":"string","enum":["ready"]}},"required":["echo"],"additionalProperties":false}}}"""
         ) as JsonObject
         val prompt =
@@ -155,7 +152,7 @@ class ModelClient :
             reply.message.toolCalls?.singleOrNull()
                 ?: throw ModelFailure("tools", "This model did not return the required tool call.")
         if (call.function.name != "buddy_probe" ||
-            Json.parseToJsonElement(call.function.arguments) != Json.parseToJsonElement("""{"echo":"ready"}""")
+            json.parseToJsonElement(call.function.arguments) != json.parseToJsonElement("""{"echo":"ready"}""")
         ) {
             throw ModelFailure("tools", "The model returned an invalid test tool call.")
         }
