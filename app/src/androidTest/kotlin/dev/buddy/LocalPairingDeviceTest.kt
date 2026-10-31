@@ -22,6 +22,7 @@ import dev.buddy.adb.AdbTransport
 import dev.buddy.adb.BootstrapCommand
 import dev.buddy.adb.PairingClient
 import dev.buddy.connection.BootstrapProvider
+import dev.buddy.connection.DaemonAuthorization
 import dev.buddy.core.LoopbackPort
 import dev.buddy.qualification.AdbPortProbe
 import dev.buddy.shell.IBuddyHelper
@@ -427,22 +428,17 @@ class LocalPairingDeviceTest {
             assertEquals(ShellProtocol.SHELL_UID, connectedHelper.capabilities().getInt("helperUid"))
             enter(Stage.FRESH_TRANSPORT_AUTHORIZATION_PROOF)
             val previousProof = connectedHelper.capabilities().getLong("authorizationDeadline")
-            val proof = BootstrapProvider.prepare(ShellProtocol.REVALIDATE, connectedHelper)
-            val challenge = proof.nonce.copyOf()
+            var proofTransport: AdbTransport? = null
             try {
-                connectedHelper.prepareAuthorization(challenge)
-                withContext(Dispatchers.IO) {
-                    // A distinct transport constructs a distinct TLS context: no pooled socket/session.
-                    AdbTransport(identity).use { fresh ->
-                        fresh.connect(LoopbackPort(connectPort))
-                        fresh.bootstrap(BootstrapCommand.forInstalledApp(context, revalidate = true), challenge)
-                    }
-                }
-                withTimeout(5_000) { proof.result.await() }
-                check(connectedHelper.capabilities().getLong("authorizationDeadline") > previousProof)
+                val deadline = DaemonAuthorization(context, identity).refresh(
+                    connectedHelper,
+                    LoopbackPort(connectPort),
+                    onOpen = { proofTransport = it },
+                    onClose = { if (proofTransport === it) proofTransport = null }
+                )
+                check(deadline > previousProof)
             } finally {
-                challenge.fill(0)
-                BootstrapProvider.clear()
+                proofTransport?.close()
             }
             enter(Stage.WIRELESS_DEBUGGING_REVOCATION)
             val lastProof = connectedHelper.capabilities().getLong("authorizationDeadline")
