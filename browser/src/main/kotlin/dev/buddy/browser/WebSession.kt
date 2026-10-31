@@ -59,6 +59,7 @@ class WebSession(context: Context) : WebPort {
     private var attached = false
     private var userVisible = false
     private var beforePause = WebStatus.EMPTY
+    private var awaitingPageStart: String? = null
     private var pageFailed = false
     private var closed = false
     private var generation = 0L
@@ -153,6 +154,7 @@ class WebSession(context: Context) : WebPort {
                 pendingOrigin = null,
                 interruption = null
             )
+        awaitingPageStart = address.url
         current.loadUrl(address.url)
     }
     fun allowPendingNavigation() {
@@ -391,7 +393,8 @@ class WebSession(context: Context) : WebPort {
                 return false
             }
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                if (closed) return
+                if (closed || (awaitingPageStart != null && url != awaitingPageStart)) return
+                awaitingPageStart = null
                 val address = runCatching { WebAddress.parse(url) }.getOrNull()
                 if (address == null || address.origin != approvedOrigin || address.origin in excludedOrigins) {
                     view.stopLoading()
@@ -409,7 +412,7 @@ class WebSession(context: Context) : WebPort {
                 }
             }
             override fun onPageFinished(view: WebView, url: String) {
-                if (closed || view !== this@WebSession.view || url != view.url ||
+                if (closed || awaitingPageStart != null || view !== this@WebSession.view || url != view.url ||
                     (_state.value.status == WebStatus.LOADING && url != _state.value.address)
                 ) {
                     return
@@ -459,7 +462,7 @@ class WebSession(context: Context) : WebPort {
                 request: WebResourceRequest,
                 response: WebResourceResponse
             ) {
-                if (closed || !request.isForMainFrame ||
+                if (closed || !request.isForMainFrame || request.url.toString() != _state.value.address ||
                     runCatching { WebAddress.parse(request.url.toString()).origin }.getOrNull() != approvedOrigin
                 ) {
                     return
