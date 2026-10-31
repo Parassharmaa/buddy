@@ -55,6 +55,7 @@ data class BuddyState(
     val draftSources: List<ChatSource> = emptyList(),
     val draft: String = "",
     val loaded: Boolean = false,
+    val clearingData: Boolean = false,
     val retention: HistoryRetention = HistoryRetention.THIRTY_DAYS,
     val error: String? = null
 )
@@ -443,7 +444,9 @@ class BuddyViewModel(
         modelTestJob = null
         pendingTest?.cancel()
         config = null
-        _state.update { it.copy(loaded = false, configured = false, active = false, testingModel = false) }
+        _state.update {
+            it.copy(loaded = false, clearingData = true, configured = false, active = false, testingModel = false)
+        }
         viewModelScope.launch {
             pendingModel?.join()
             pendingFiles?.join()
@@ -466,7 +469,9 @@ class BuddyViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                _state.update { it.copy(loaded = false, error = "Local data could not be cleared. Try again.") }
+                _state.update {
+                    it.copy(loaded = false, clearingData = false, error = "Local data could not be cleared. Try again.")
+                }
             }
             loadRecords()
         }

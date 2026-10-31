@@ -17,6 +17,12 @@ class BrowserFixtureActivity : Activity() {
         setContentView(session.attach(this))
     }
 
+    fun resetSession() {
+        session.close()
+        session = WebSession(this)
+        setContentView(session.attach(this))
+    }
+
     override fun onDestroy() {
         session.close()
         super.onDestroy()
