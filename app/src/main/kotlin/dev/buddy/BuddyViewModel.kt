@@ -495,6 +495,7 @@ class BuddyViewModel(
             loadRecords()
         }
     }
+    fun exportConversation(expectedId: String, uri: Uri) = files.exportConversation(expectedId, uri)
     fun importDocument(uri: Uri) = files.importDocument(uri)
     fun setMemoryEnabled(enabled: Boolean) {
         if (!enabled) sources.removeMemories()

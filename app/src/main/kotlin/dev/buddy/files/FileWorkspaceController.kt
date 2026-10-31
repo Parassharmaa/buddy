@@ -5,18 +5,22 @@ import androidx.core.net.toUri
 import dev.buddy.BuddyState
 import dev.buddy.browser.DownloadedFile
 import dev.buddy.core.Conversation
+import dev.buddy.core.ConversationExports
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.EncryptedStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -152,6 +156,39 @@ internal class FileWorkspaceController(
                 throw cancelled
             } catch (_: Exception) {
                 fileError("Export failed. The destination may contain a partial file; check it before trying again.")
+            } finally {
+                _state.update { it.copy(exporting = false) }
+            }
+        }
+    }
+
+    fun exportConversation(expectedId: String, destination: Uri) {
+        val writer = documents ?: return
+        if (!mayStart()) return
+        val conversation = _state.value.conversation
+        if (conversation.id != expectedId) {
+            fileError("Open the original conversation and choose Save conversation again.")
+            return
+        }
+        _state.update { it.copy(exporting = true, error = null) }
+        fileJob = scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val context = currentCoroutineContext()
+                    val bytes = ConversationExports.encode(conversation) { context.isActive }
+                    try {
+                        writer.write(destination, bytes)
+                    } finally {
+                        bytes.fill(0)
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                fileError("Export interrupted. The destination may contain a partial file.")
+                throw cancelled
+            } catch (_: Exception) {
+                fileError(
+                    "The conversation could not be saved. Exports are limited to 8 MiB; check the destination before trying again."
+                )
             } finally {
                 _state.update { it.copy(exporting = false) }
             }
