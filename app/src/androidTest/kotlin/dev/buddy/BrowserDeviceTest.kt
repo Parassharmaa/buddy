@@ -190,9 +190,12 @@ class BrowserDeviceTest {
             }
             withContext(Dispatchers.Main) { activity.session.navigate(WebAddress.parse(pages.origin + "/captcha")) }
             withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
+            val challenge = activity.session.observe(pages.origin)
             assertEquals(
+                "CAPTCHA_READ status=${activity.session.state.value.status} " +
+                    "interruption=${activity.session.state.value.interruption} canRead=${activity.session.state.value.canRead}",
                 WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED),
-                activity.session.observe(pages.origin)
+                challenge
             )
             assertEquals(WebInterruption.VERIFICATION, activity.session.state.value.interruption)
             assertEquals(

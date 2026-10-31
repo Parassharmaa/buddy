@@ -409,6 +409,11 @@ class WebSession(context: Context) : WebPort {
                 }
             }
             override fun onPageFinished(view: WebView, url: String) {
+                if (closed || view !== this@WebSession.view || url != view.url ||
+                    (_state.value.status == WebStatus.LOADING && url != _state.value.address)
+                ) {
+                    return
+                }
                 if (!closed) {
                     _state.value =
                         _state.value.copy(
