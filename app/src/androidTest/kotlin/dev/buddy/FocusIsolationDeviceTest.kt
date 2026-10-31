@@ -51,6 +51,10 @@ class FocusIsolationDeviceTest {
         var virtualDraftLength = -1
         var physicalDraftPreserved = false
         var physicalReceivedVirtualDraft = false
+        var virtualIsMasked = false
+        var virtualHasReplacement = false
+        var virtualIgnoresCaseMatch = false
+        var virtualMismatchPositions: List<Int> = emptyList()
         try {
             AuthenticatedHelperFixture.start(instrumentation.targetContext, automation).use { fixture ->
                 FixtureFrameSink().use { frames ->
@@ -101,7 +105,12 @@ class FocusIsolationDeviceTest {
                         val physicalAfter = ui.node(0) { it.isEditable }.text?.toString()
                         physicalDraftPreserved = physicalAfter == "physicalone"
                         physicalReceivedVirtualDraft = physicalAfter == message
-                        virtualDraftLength = ui.node(display) { it.isEditable }.text?.length ?: -1
+                        val actual = ui.node(display) { it.isEditable }.text?.toString()
+                        virtualDraftLength = actual?.length ?: -1
+                        virtualIsMasked = !actual.isNullOrEmpty() && actual.all { it in "•●*" }
+                        virtualHasReplacement = actual?.any { it == '\ufffd' || it == '?' } == true
+                        virtualIgnoresCaseMatch = actual?.equals(message, ignoreCase = true) == true
+                        virtualMismatchPositions = message.indices.filter { actual?.getOrNull(it) != message[it] }
                         ui.node(display) { it.isEditable && it.text?.toString() == message }
                         val send = ui.node(display) { it.text?.toString() == "Send to fixture inbox" }
                         val bounds = Rect().also(send::getBoundsInScreen)
@@ -131,7 +140,11 @@ class FocusIsolationDeviceTest {
                 "Focus isolation fixture failed at $stage; virtualWindows=$virtualWindows; " +
                     "virtualRoots=$virtualRoots; editorSeen=$virtualEditorSeen; draftAccepted=$draftAccepted; " +
                     "actionDisplay=$virtualActionDisplay; virtualDraftLength=$virtualDraftLength; " +
-                    "physicalPreserved=$physicalDraftPreserved; physicalReceivedVirtual=$physicalReceivedVirtualDraft",
+                    "physicalPreserved=$physicalDraftPreserved; " +
+                    "physicalReceivedVirtual=$physicalReceivedVirtualDraft; " +
+                    "masked=$virtualIsMasked; replacement=$virtualHasReplacement; " +
+                    "caseMatch=$virtualIgnoresCaseMatch; " +
+                    "mismatchPositions=$virtualMismatchPositions",
                 failure
             )
         } finally {
