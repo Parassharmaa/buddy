@@ -27,19 +27,31 @@ for package in packages:
 # that cleanup; retain only the process, exception type and recognized signal names.
 try:
     events = subprocess.run(
-        ["adb", "logcat", "-b", "events", "-d", "-v", "raw", "-s", "am_crash:I", "*:S"],
+        ["adb", "logcat", "-b", "events", "-d", "-v", "brief", "-s", "am_crash:I", "am_kill:I", "am_proc_died:I", "*:S"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5,
     ).stdout
 except (OSError, subprocess.TimeoutExpired):
     events = ""
 signals = {"Segmentation fault", "Aborted", "Bus error", "Illegal instruction", "Floating point exception"}
 for line in events.splitlines():
-    values = line.strip().removeprefix("[").split(",", 8)
-    if len(values) < 8:
+    event = re.match(r"^[A-Z]/(am_crash|am_kill|am_proc_died)\(\s*\d+\):\s*\[(.*)", line.strip())
+    if not event:
         continue
-    user, pid, package, _flags, kind, message = (value.strip() for value in values[:6])
+    tag, payload = event.groups()
+    values = [value.strip() for value in payload.rstrip("]").split(",", 8)]
+    if len(values) < 5:
+        continue
+    user, pid, package = values[:3]
     if package not in packages or not user.isdecimal() or not pid.isdecimal():
         continue
+    if tag != "am_crash":
+        if re.fullmatch(r"-?\d+", values[3]):
+            state = f"; state={values[4]}" if tag == "am_proc_died" and values[4].isdecimal() else ""
+            print(f"Test process lifecycle ({package}): event={tag}; pid={pid}; oomAdj={values[3]}{state}")
+        continue
+    if len(values) < 8:
+        continue
+    kind, message = values[4:6]
     if len(kind) > 160 or (
         kind != "Native crash" and not re.fullmatch(r"(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*", kind)
     ):
