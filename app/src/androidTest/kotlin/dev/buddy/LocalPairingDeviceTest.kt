@@ -506,8 +506,9 @@ class LocalPairingDeviceTest {
 
     private fun probeDaemonPort(context: Context, automation: UiAutomation): Pair<Int?, String> {
         val arguments = BootstrapCommand.forInstalledApp(context).arguments.take(4) + AdbPortProbe::class.java.name
-        val command = arguments.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
-        val descriptors = automation.executeShellCommandRwe(command)
+        // UiAutomation tokenizes arguments directly; shell quoting would become literal text.
+        check(arguments.none { it.any(Char::isWhitespace) })
+        val descriptors = automation.executeShellCommandRwe(arguments.joinToString(" "))
         return try {
             val poll = StructPollfd().apply {
                 fd = descriptors[0].fileDescriptor

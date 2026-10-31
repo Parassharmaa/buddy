@@ -94,3 +94,64 @@ for line in qualification.splitlines():
         reported.append(stage[1])
 for stage in reported[-20:]:
     print(f"Pairing qualification stage: {stage}")
+
+# Classify native failures in test processes. Never export abort text, addresses or traces.
+try:
+    crash_buffer = subprocess.run(
+        ["adb", "logcat", "-b", "crash", "-d", "-t", "1000", "-v", "brief"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5,
+    ).stdout
+except (OSError, subprocess.TimeoutExpired):
+    crash_buffer = ""
+libraries = {
+    "libbuddy_pairing.so": "PAIRING_JNI",
+    "libconscrypt_jni.so": "BUNDLED_TLS",
+    "libjavacrypto.so": "PLATFORM_TLS",
+    "libcrypto.so": "PLATFORM_CRYPTO",
+    "libart.so": "ART",
+    "libandroid_runtime.so": "ANDROID_FRAMEWORK",
+    "libbinder.so": "BINDER",
+    "libhwui.so": "GRAPHICS",
+    "libandroidx.graphics.path.so": "GRAPHICS_PATH",
+    "libsqlite.so": "SQLITE",
+    "libc.so": "LIBC",
+}
+abort_codes = {
+    "jni detected error": "JNI_CONTRACT",
+    "pending exception": "JNI_PENDING_EXCEPTION",
+    "deleted reference": "JNI_DELETED_REFERENCE",
+    "scudo error": "HEAP_CORRUPTION",
+    "fdsan": "FD_OWNERSHIP",
+    "getrandom": "RANDOM_SOURCE",
+    "assertion": "NATIVE_ASSERTION",
+    "check failed": "NATIVE_ASSERTION",
+    "pthread_mutex": "NATIVE_MUTEX",
+}
+records = []
+record = None
+for line in crash_buffer.splitlines():
+    body = re.sub(r"^[A-Z]/[^()]+\(\s*\d+\):\s*", "", line).strip()
+    if body.startswith("*** ***"):
+        record = None
+    command = re.fullmatch(r"Cmdline: ([A-Za-z0-9_.:]+)", body)
+    process = re.search(r">>>\s*([A-Za-z0-9_.:]+)\s*<<<", body)
+    package = command[1] if command else process[1] if process else None
+    if package is not None:
+        if package not in packages:
+            record = None
+        elif record is None or record["package"] != package:
+            record = {"package": package, "modules": set(), "causes": set()}
+            records.append(record)
+    if record is None:
+        continue
+    if body.startswith("Abort message:"):
+        record["causes"].update(code for marker, code in abort_codes.items() if marker in body.lower())
+        if not record["causes"]:
+            record["causes"].add("UNCLASSIFIED_ABORT")
+    if re.match(r"#\d+\s+pc\s+[0-9a-fA-F]+\b", body):
+        record["modules"].update(code for library, code in libraries.items() if library in body)
+for record in records[-5:]:
+    if record["modules"] or record["causes"]:
+        causes = ",".join(sorted(record["causes"])) or "UNCLASSIFIED"
+        modules = ",".join(sorted(record["modules"])) or "UNCLASSIFIED"
+        print(f"Native crash classification ({record['package']}): causes={causes}; modules={modules}")
