@@ -77,6 +77,7 @@ import dev.buddy.storage.HistoryRetention
                     "Phone connection" to status,
                     "Privacy" to "Encrypted on this phone · screenshots off",
                     "Memory" to "Preferences you choose to save",
+                    "App guides" to "Versioned interface facts",
                     "Diagnostics" to "Capabilities and build details"
                 ).forEach { (title, subtitle) ->
                     Card(onClick = { section = title }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
@@ -87,6 +88,11 @@ import dev.buddy.storage.HistoryRetention
                     }
                 }
             }
+
+            "App guides" -> AppGuidesScreen(
+                state.loaded && state.configured && !state.active && !state.importing && !state.exporting,
+                model.sources::guide
+            )
 
             "Models" -> ModelSettings(state, model)
 
