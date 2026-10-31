@@ -70,6 +70,9 @@ class LocalPairingDeviceTest {
         var wirelessPageSeen = false
         var pairingRowSeen = false
         var masterToggled = false
+        var addressRowSeen = false
+        var portOnlySeen = false
+        var unavailableSeen = false
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -119,8 +122,12 @@ class LocalPairingDeviceTest {
                 }
             }
         }
-        fun portIn(text: String): Int? = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})")
-            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
+        fun portIn(text: String): Int? {
+            val addressPort = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:([0-9]{1,5})").find(text)
+            // Settings can format an empty IPv4 address as :port on an IPv6-only default link.
+            val portOnly = Regex("^\\s*:\\s*([0-9]{1,5})\\s*$").find(text)
+            return (addressPort ?: portOnly)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 }
+        }
         try {
             identity.forget()
             stage = "wireless_support"
@@ -205,10 +212,20 @@ class LocalPairingDeviceTest {
                 }
             }
             stage = "wireless_connection_port"
-            val connectPort = withTimeout(15_000) {
+            val connectPort = withTimeout(30_000) {
                 while (true) {
                     allowNetwork()
-                    nodes().firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
+                    val controls = nodes()
+                    addressRowSeen = addressRowSeen || controls.any {
+                        it.text?.toString()?.contains("IP address", ignoreCase = true) == true
+                    }
+                    portOnlySeen = portOnlySeen || controls.any {
+                        it.text?.toString()?.trim()?.matches(Regex(":\\s*[0-9]{1,5}")) == true
+                    }
+                    unavailableSeen = unavailableSeen || controls.any {
+                        it.text?.toString()?.equals("Unavailable", ignoreCase = true) == true
+                    }
+                    controls.firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
                         ?.let { return@withTimeout it }
                     delay(150)
                 }
@@ -302,7 +319,8 @@ class LocalPairingDeviceTest {
                     "developer=$developer; mainWindows=$physicalWindowCount; settingsVisible=$settingsVisible; " +
                     "supported=$wifiSupported; launched=$settingsLaunched; developerTitle=$developerTitleSeen; " +
                     "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited; " +
-                    "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled",
+                    "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled; " +
+                    "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen",
                 failure
             )
         } finally {
