@@ -34,6 +34,13 @@ import dev.buddy.storage.WorkspaceArtifact
 
 @Composable internal fun FilesPanel(state: BuddyState, model: BuddyViewModel) {
     val context = LocalContext.current
+    var conversationExportId by rememberSaveable { mutableStateOf<String?>(null) }
+    val conversationExport =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            val selected = conversationExportId
+            conversationExportId = null
+            if (uri != null && selected != null) model.exportConversation(selected, uri)
+        }
     var exportId by rememberSaveable { mutableStateOf<String?>(null) }
     var removingId by rememberSaveable { mutableStateOf<String?>(null) }
     val documents = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -74,6 +81,16 @@ import dev.buddy.storage.WorkspaceArtifact
             TextButton(onClick = {
                 photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }, enabled = !busy) { Text("Add photo") }
+        }
+        if (state.conversation.messages.isNotEmpty() || state.conversation.runs.isNotEmpty()) {
+            TextButton(onClick = {
+                conversationExportId = state.conversation.id
+                conversationExport.launch("Buddy conversation.json")
+            }, enabled = !busy && state.loaded) { Text("Save conversation") }
+            Text(
+                "Saved copies include messages, attached source text and task history.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         if (state.importing || state.exporting) {
             Row {

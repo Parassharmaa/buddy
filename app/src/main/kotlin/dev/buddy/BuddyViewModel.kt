@@ -67,6 +67,7 @@ class BuddyViewModel(
     private val documents: DocumentAccess? = null,
     browserContext: Context? = null
 ) : ViewModel() {
+    private val applicationContext = browserContext?.applicationContext
     private val client = ModelClient()
     private val downloader = BrowserDownloader()
     private val _state = MutableStateFlow(BuddyState())
@@ -466,6 +467,7 @@ class BuddyViewModel(
             try {
                 schedules.clear()
                 browser.clearData()
+                applicationContext?.let { dev.buddy.files.ArtifactProvider.revokeAll(it) }
                 persistence.withLock { store.clear() }
                 schedules.cleared()
                 config = null
@@ -487,6 +489,7 @@ class BuddyViewModel(
             loadRecords()
         }
     }
+    fun exportConversation(expectedId: String, uri: Uri) = files.exportConversation(expectedId, uri)
     fun importDocument(uri: Uri) = files.importDocument(uri)
     fun setMemoryEnabled(enabled: Boolean) {
         if (!enabled) sources.removeMemories()
