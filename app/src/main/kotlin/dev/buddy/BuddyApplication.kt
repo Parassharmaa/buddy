@@ -16,6 +16,7 @@ class BuddyApplication :
     val store by lazy { EncryptedStore(this) }
     override fun onCreate() {
         super.onCreate()
+        if (Application.getProcessName() != packageName) return
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "history-retention",
             ExistingPeriodicWorkPolicy.KEEP,

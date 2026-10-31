@@ -1,12 +1,17 @@
 package dev.buddy
 
 import android.app.KeyguardManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
@@ -15,11 +20,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.adb.BootstrapCommand
 import dev.buddy.connection.BootstrapProvider
+import dev.buddy.qualification.LeaseOwnerService
 import dev.buddy.shell.ShellProtocol
 import java.security.SecureRandom
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -31,6 +39,62 @@ import org.junit.runner.RunWith
 // still require the separate wireless transport probe and physical-device qualification.
 @RunWith(AndroidJUnit4::class)
 class AuthorizationProofDeviceTest {
+    @Test fun ownerProcessDeathReleasesTheDisplayWithoutKillingTheMainAppOrHelper() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
+        assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val connected = CompletableDeferred<IBinder>()
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                connected.complete(service)
+            }
+            override fun onServiceDisconnected(name: ComponentName) = Unit
+            override fun onNullBinding(name: ComponentName) {
+                connected.completeExceptionally(IllegalStateException("Fixture owner unavailable"))
+            }
+        }
+        val bound = withContext(Dispatchers.Main) {
+            context.bindService(Intent(context, LeaseOwnerService::class.java), connection, Context.BIND_AUTO_CREATE)
+        }
+        check(bound)
+        try {
+            val owner = withTimeout(5_000) { connected.await() }
+            val request = Parcel.obtain(owner)
+            val response = Parcel.obtain()
+            val ownerPid = try {
+                check(owner.transact(IBinder.FIRST_CALL_TRANSACTION, request, response, 0))
+                response.readException()
+                response.readInt()
+            } finally {
+                request.recycle()
+                response.recycle()
+            }
+            val mainPid = android.os.Process.myPid()
+            check(ownerPid > 1 && ownerPid != mainPid)
+            AuthenticatedHelperFixture.start(context, instrumentation.uiAutomation).use { fixture ->
+                FixtureFrameSink().use { frames ->
+                    val helper = fixture.helper
+                    val lease = requireNotNull(
+                        helper.acquireLease(owner, ByteArray(32).also(SecureRandom()::nextBytes)).getString("lease")
+                    )
+                    val token = helper.createDisplay(lease, 720, 1280, 240, frames.surface)
+                    val display = helper.displayState(lease, token).getInt("displayId")
+                    android.os.Process.killProcess(ownerPid)
+                    withTimeout(5_000) {
+                        val manager = context.getSystemService(DisplayManager::class.java)
+                        while (owner.isBinderAlive || manager.getDisplay(display)?.isValid == true) delay(25)
+                    }
+                    assertTrue(android.os.Process.myPid() == mainPid)
+                    assertTrue(helper.capabilities().getInt("helperUid") == ShellProtocol.SHELL_UID)
+                    assertThrows(IllegalStateException::class.java) { helper.displayState(lease, token) }
+                }
+            }
+        } finally {
+            withContext(Dispatchers.Main) { context.unbindService(connection) }
+        }
+    }
+
     @Test fun helperTerminationReleasesItsDisplayWhileTheAppRemainsAlive() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
