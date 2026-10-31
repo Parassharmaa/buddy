@@ -56,7 +56,7 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    jvmArgs("--enable-native-access=ALL-UNNAMED", "-Xcheck:jni")
     systemProperty("java.library.path", file("build/host").absolutePath)
 }
 
