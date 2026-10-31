@@ -1,9 +1,11 @@
 package dev.buddy.helper
 
 import android.os.Build
+import android.os.Process
 import android.view.InputWindowHandle
 import android.view.WindowManager
 import android.window.WindowInfosListener
+import dev.buddy.shell.ShellProtocol
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -23,15 +25,28 @@ internal object WindowPrivacy {
         val known: Boolean get() = status == Status.AVAILABLE
     }
 
-    private fun summarize(windows: Array<InputWindowHandle>, displayId: Int, fixtureUid: Int): Result {
+    private fun summarize(
+        windows: Array<InputWindowHandle>,
+        displayId: Int,
+        fixtureUid: Int,
+        sinks: SystemInputSinkPolicy
+    ): Result {
         if (windows.size > 2048) return Result(Status.LIMIT)
         // Include hidden windows too: a secure window must never be discarded by visibility filtering.
         // Do not access names, package strings, surfaces or pixels, including on display 0.
         val scoped = windows.filter { it.displayId == displayId }
         return Result(
-            status = if (scoped.isNotEmpty()) Status.AVAILABLE else Status.EMPTY,
+            status = if (scoped.any { it.ownerUid == fixtureUid }) Status.AVAILABLE else Status.EMPTY,
             secure = scoped.any { it.layoutParamsFlags and WindowManager.LayoutParams.FLAG_SECURE != 0 },
-            mixed = scoped.any { it.ownerUid != fixtureUid },
+            mixed = scoped.any {
+                it.ownerUid != fixtureUid && !sinks.matches(
+                    it.ownerUid,
+                    it.layoutParamsType,
+                    it.inputConfig,
+                    it.layoutParamsFlags,
+                    it.token != null
+                )
+            },
             windowCount = windows.size,
             scopedCount = scoped.size,
             displays = windows.map { it.displayId }.distinct().sorted().take(16),
@@ -41,11 +56,15 @@ internal object WindowPrivacy {
         )
     }
 
-    private class Listener(private val displayId: Int, private val fixtureUid: Int) : WindowInfosListener() {
+    private class Listener(
+        private val displayId: Int,
+        private val fixtureUid: Int,
+        private val sinks: SystemInputSinkPolicy
+    ) : WindowInfosListener() {
         val latest = AtomicReference<Result?>()
         val ready = CountDownLatch(1)
         fun initial(windows: Array<InputWindowHandle>) {
-            val summary = summarize(windows, displayId, fixtureUid)
+            val summary = summarize(windows, displayId, fixtureUid, sinks)
             latest.compareAndSet(null, summary)
             if (latest.get()?.known == true) ready.countDown()
         }
@@ -53,18 +72,27 @@ internal object WindowPrivacy {
             windows: Array<InputWindowHandle>,
             displays: Array<WindowInfosListener.DisplayInfo>
         ) {
-            val summary = summarize(windows, displayId, fixtureUid)
+            val summary = summarize(windows, displayId, fixtureUid, sinks)
             latest.set(summary)
             if (summary.known) ready.countDown()
         }
     }
 
-    @android.annotation.SuppressLint("PrivateApi", "BlockedPrivateApi")
+    @android.annotation.SuppressLint("PrivateApi", "BlockedPrivateApi", "SoonBlockedPrivateApi")
     fun inspect(displayId: Int, fixtureUid: Int): Result {
         require(displayId > 0)
+        if (Process.myUid() != ShellProtocol.SHELL_UID) return Result(Status.PERMISSION_DENIED)
         if (Build.VERSION.SDK_INT < 34 || fixtureUid < 10000) return Result(Status.UNSUPPORTED)
         return try {
-            val listener = Listener(displayId, fixtureUid)
+            val config = Class.forName("android.os.InputConfig")
+            fun bit(name: String) = config.getDeclaredField(name).getInt(null)
+            val sinks = SystemInputSinkPolicy(
+                WindowManager.LayoutParams::class.java.getDeclaredField("TYPE_INPUT_CONSUMER").getInt(null),
+                bit("NO_INPUT_CHANNEL"),
+                bit("NOT_FOCUSABLE"),
+                bit("NOT_TOUCHABLE")
+            )
+            val listener = Listener(displayId, fixtureUid, sinks)
             var registered = false
             try {
                 val initial = listener.register()
