@@ -160,6 +160,10 @@ class PhoneQualificationActivity : ComponentActivity() {
                                 port.toIntOrNull() in 1..65535
                     ) { Text("Run foreground check") }
                     Text("The model check sends fixed synthetic fixture data to the model saved in Settings.")
+                    Text(
+                        "Returning resumes the fixed draft test. Custom edits stay out of model context " +
+                            "and may be replaced by the test."
+                    )
                     Button(
                         onClick = { startCheck(useModel = true) },
                         enabled =

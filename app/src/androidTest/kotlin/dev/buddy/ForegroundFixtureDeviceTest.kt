@@ -26,6 +26,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -246,6 +247,126 @@ class ForegroundFixtureDeviceTest {
                     assertTrue(check.await())
                     assertEquals(FixtureTakeoverPhase.CLOSED, phase.value)
                     assertFalse(control.request(true))
+                }
+            } finally {
+                withContext(NonCancellable) {
+                    check.cancel()
+                    check.join()
+                    ParcelFileDescriptor.AutoCloseInputStream(
+                        automation.executeShellCommand("am force-stop dev.buddy.fixture")
+                    ).use { it.readNBytes(4096) }
+                    automation.serviceInfo = automation.serviceInfo.apply { this.flags = flags }
+                }
+            }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun modelPauseCancelsTheProviderAndResumesAfterHumanReturnWithoutSharingCustomText() = runBlocking {
+        withForeground { _, helper, automation ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val flags = automation.serviceInfo.flags
+            automation.serviceInfo = automation.serviceInfo.apply {
+                this.flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            }
+            val control = FixtureTakeoverControl()
+            val phase = MutableStateFlow(FixtureTakeoverPhase.PREPARING)
+            val pendingModel = CompletableDeferred<Unit>()
+            var cancelled = false
+            var turn = 0
+            val model = object : ChatModel {
+                override suspend fun complete(
+                    config: ModelConfig,
+                    messages: List<ChatMessage>,
+                    tools: List<JsonObject>
+                ): ModelReply {
+                    assertFalse(messages.any { it.content.orEmpty().contains("human-private-model-canary") })
+                    val current = turn++
+                    if (current == 1) {
+                        pendingModel.complete(Unit)
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            cancelled = true
+                        }
+                    }
+                    val name = when (current) {
+                        0, 2 -> "fixture_observe"
+                        3 -> "fixture_set_test_draft"
+                        else -> "end_task"
+                    }
+                    val arguments = if (name == "end_task") {
+                        val result = Json.parseToJsonElement(requireNotNull(messages.last().content)).jsonObject
+                        buildJsonObject {
+                            put("outcome", "Controlled draft verified after handover")
+                            put("evidence_ids", result.getValue("evidence_ids") as JsonArray)
+                        }.toString()
+                    } else {
+                        "{}"
+                    }
+                    return ModelReply(
+                        ChatMessage(
+                            "assistant",
+                            toolCalls = listOf(
+                                ToolCall(
+                                    "human-model-$current",
+                                    function = FunctionCall(name, arguments)
+                                )
+                            )
+                        ),
+                        10,
+                        "tool_calls"
+                    )
+                }
+            }
+            val check = async(Dispatchers.Default) {
+                ModelFixtureCheck.run(
+                    context, helper,
+                    ModelConfig("https://no-live-provider.invalid/v1", "fixture", ""), model,
+                    visible = { true }, refreshAuthorization = { error("The native round trip exceeded renewal") },
+                    stopTransport = {}, stage = {}, control = control, phase = { phase.value = it }
+                )
+            }
+            fun editor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+                if (node.packageName?.toString() != "dev.buddy.fixture") return null
+                if (node.viewIdResourceName == "dev.buddy.fixture:id/fixture_draft_input") return node
+                for (index in 0 until node.childCount) {
+                    node.getChild(index)?.let { editor(it)?.let { found -> return found } }
+                }
+                return null
+            }
+            try {
+                withTimeout(15_000) {
+                    pendingModel.await()
+                    assertTrue(control.request(false))
+                    phase.first { it == FixtureTakeoverPhase.HUMAN }
+                    assertTrue(cancelled)
+                    val physical = withTimeout(5_000) {
+                        while (true) {
+                            val found = automation.windowsOnAllDisplays.get(0).orEmpty().firstNotNullOfOrNull {
+                                it.root?.let(::editor)
+                            }
+                            if (found != null) return@withTimeout found
+                            delay(50)
+                        }
+                        error("Human fixture missing")
+                    }
+                    assertTrue(
+                        physical.performAction(
+                            AccessibilityNodeInfo.ACTION_SET_TEXT,
+                            Bundle().apply {
+                                putCharSequence(
+                                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                    "human-private-model-canary"
+                                )
+                            }
+                        )
+                    )
+                    assertTrue(control.request(true))
+                    check.await()
+                    assertEquals(5, turn)
+                    assertEquals(FixtureTakeoverPhase.CLOSED, phase.value)
                 }
             } finally {
                 withContext(NonCancellable) {

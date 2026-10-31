@@ -82,7 +82,7 @@ class FixtureTaskService : Service() {
         }
         runId = id
         val takeover = intent.getBooleanExtra("takeover", false)
-        human = if (takeover) FixtureTakeoverControl() else null
+        human = FixtureTakeoverControl()
         try {
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Supervised fixture checks", NotificationManager.IMPORTANCE_LOW)
@@ -100,7 +100,7 @@ class FixtureTaskService : Service() {
         status.value = FixtureTaskStatus(
             id,
             "Starting supervised fixture check",
-            takeover = if (takeover) FixtureTakeoverPhase.PREPARING else null
+            takeover = FixtureTakeoverPhase.PREPARING
         )
         running = scope.launch {
             try {
@@ -202,9 +202,19 @@ class FixtureTaskService : Service() {
                                                 publish(id, message)
                                             }
                                         },
-                                        preview = { value ->
+                                        preview = ::show,
+                                        control = requireNotNull(human),
+                                        phase = { value ->
                                             withContext(Dispatchers.Main.immediate) {
-                                                status.value = status.value.copy(preview = value)
+                                                status.value = status.value.copy(takeover = value)
+                                                if (value == FixtureTakeoverPhase.READY) {
+                                                    publish(id, "Model check active; native takeover is available")
+                                                } else if (value == FixtureTakeoverPhase.HUMAN) {
+                                                    publish(
+                                                        id,
+                                                        "Use the fixture, then return here to resume the fixed test"
+                                                    )
+                                                }
                                             }
                                         }
                                     )
