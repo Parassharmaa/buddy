@@ -37,5 +37,11 @@ class PhoneQualificationUiTest {
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
             }
         }
+        compose.onNodeWithText("Check takeover and return").performScrollTo().assertIsNotEnabled()
+        compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap ->
+            File(directory, "18-takeover-check.png").outputStream().use { output ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            }
+        }
     }
 }

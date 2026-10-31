@@ -188,6 +188,34 @@ class PhoneQualificationActivity : ComponentActivity() {
                             !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
                                 Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
                     ) { Text("Run model check with notification") }
+                    Button(
+                        onClick = {
+                            FixtureTaskService.start(
+                                this@PhoneQualificationActivity,
+                                port.toIntOrNull() ?: 0,
+                                takeover = true
+                            )
+                        },
+                        enabled =
+                            !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
+                                Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
+                    ) { Text("Check takeover and return") }
+                    Text(
+                        "The takeover check uses no model. Type the test word human in the moved fixture draft. " +
+                            "Open Buddy through its notification, then choose Return. Finish within a minute."
+                    )
+                    if (supervised.id != null) {
+                        if (supervised.takeover == FixtureTakeoverPhase.READY) {
+                            Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, false) }) {
+                                Text("Take over fixture")
+                            }
+                        }
+                        if (supervised.takeover == FixtureTakeoverPhase.HUMAN) {
+                            Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, true) }) {
+                                Text("Return fixture to workspace")
+                            }
+                        }
+                    }
                     Text(supervised.message)
                     FixturePreviewCard(if (supervised.id != null) supervised.preview else preview)
                     if (supervised.id != null) {

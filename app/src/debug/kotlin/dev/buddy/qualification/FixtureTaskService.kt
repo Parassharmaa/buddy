@@ -48,7 +48,8 @@ import kotlinx.serialization.json.Json
 internal data class FixtureTaskStatus(
     val id: String? = null,
     val message: String = "No supervised check running",
-    val preview: FixturePreview? = null
+    val preview: FixturePreview? = null,
+    val takeover: FixtureTakeoverPhase? = null
 )
 
 class FixtureTaskService : Service() {
@@ -56,10 +57,16 @@ class FixtureTaskService : Service() {
     private val manager get() = getSystemService(NotificationManager::class.java)
     private var running: Job? = null
     private var runId: String? = null
+    private var human: FixtureTakeoverControl? = null
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == STOP) {
             if (intent.data?.lastPathSegment == runId) running?.cancel()
+            if (runId == null) stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == CONTROL) {
+            if (intent.data?.lastPathSegment == runId) human?.request(intent.getBooleanExtra("returning", false))
             if (runId == null) stopSelf()
             return START_NOT_STICKY
         }
@@ -74,6 +81,8 @@ class FixtureTaskService : Service() {
             return START_NOT_STICKY
         }
         runId = id
+        val takeover = intent.getBooleanExtra("takeover", false)
+        human = if (takeover) FixtureTakeoverControl() else null
         try {
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Supervised fixture checks", NotificationManager.IMPORTANCE_LOW)
@@ -88,7 +97,11 @@ class FixtureTaskService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        status.value = FixtureTaskStatus(id, "Starting supervised fixture check")
+        status.value = FixtureTaskStatus(
+            id,
+            "Starting supervised fixture check",
+            takeover = if (takeover) FixtureTakeoverPhase.PREPARING else null
+        )
         running = scope.launch {
             try {
                 EngineeringSessions.supervisor.supervise { permit ->
@@ -113,47 +126,91 @@ class FixtureTaskService : Service() {
                             withTimeout(5_000) {
                                 while (!supervisionAvailable()) delay(50)
                             }
-                            val config = withContext(Dispatchers.IO) {
-                                (application as BuddyApplication).store.get("model-config")?.let {
-                                    Json.decodeFromString<ModelConfig>(it)
-                                }
-                            } ?: error("No configured model")
+                            val config = if (takeover) {
+                                null
+                            } else {
+                                withContext(Dispatchers.IO) {
+                                    (application as BuddyApplication).store.get("model-config")?.let {
+                                        Json.decodeFromString<ModelConfig>(it)
+                                    }
+                                }.also { check(it != null) { "No configured model" } }
+                            }
                             publish(id, "Connecting to local wireless debugging")
                             withTimeout(30_000) { phone.connect(port) }
                             val helper = phone.engineeringHelper()
                             val socket = AtomicReference<AdbTransport?>()
                             val authorization = DaemonAuthorization(applicationContext, AdbIdentity())
                             fun admitted() = permit.isCurrent && supervisionAvailable()
-                            ModelClient().use { model ->
-                                ModelFixtureCheck.run(
-                                    applicationContext,
+                            suspend fun refresh(): Long {
+                                check(admitted())
+                                return authorization.refresh(
                                     helper,
-                                    config,
-                                    model,
-                                    visible = ::admitted,
-                                    refreshAuthorization = {
-                                        check(admitted())
-                                        authorization.refresh(
-                                            helper,
-                                            LoopbackPort(port),
-                                            onOpen = { socket.set(it) },
-                                            onClose = { socket.compareAndSet(it, null) }
-                                        )
-                                    },
-                                    stopTransport = { socket.getAndSet(null)?.close() },
-                                    stage = { message ->
-                                        withContext(Dispatchers.Main.immediate) {
-                                            publish(id, message)
-                                        }
-                                    },
-                                    preview = { value ->
-                                        withContext(Dispatchers.Main.immediate) {
-                                            status.value = status.value.copy(preview = value)
-                                        }
-                                    }
+                                    LoopbackPort(port),
+                                    onOpen = { socket.set(it) },
+                                    onClose = { socket.compareAndSet(it, null) }
                                 )
                             }
-                            publish(id, "Controlled fixture task verified")
+                            suspend fun show(value: FixturePreview?) = withContext(Dispatchers.Main.immediate) {
+                                status.value = status.value.copy(preview = value)
+                            }
+                            if (takeover) {
+                                val verified = FixtureTakeoverCheck.run(
+                                    applicationContext,
+                                    helper,
+                                    requireNotNull(human),
+                                    ::admitted,
+                                    refreshAuthorization = ::refresh,
+                                    stopTransport = { socket.getAndSet(null)?.close() },
+                                    phase = { value ->
+                                        withContext(Dispatchers.Main.immediate) {
+                                            status.value = status.value.copy(takeover = value)
+                                            val message = when (value) {
+                                                FixtureTakeoverPhase.READY -> "Ready for native takeover"
+
+                                                FixtureTakeoverPhase.HUMAN ->
+                                                    "Type human in the fixture draft, then return here"
+
+                                                FixtureTakeoverPhase.CLOSED -> "Takeover check finished"
+
+                                                else -> "Moving the owned fixture task"
+                                            }
+                                            if (value != FixtureTakeoverPhase.CLOSED) publish(id, message)
+                                        }
+                                    },
+                                    preview = ::show
+                                )
+                                publish(
+                                    id,
+                                    if (verified) {
+                                        "Takeover and fresh return verified"
+                                    } else {
+                                        "Task returned; the test edit was not verified"
+                                    }
+                                )
+                            } else {
+                                ModelClient().use { model ->
+                                    ModelFixtureCheck.run(
+                                        applicationContext,
+                                        helper,
+                                        requireNotNull(config),
+                                        model,
+                                        visible = ::admitted,
+                                        refreshAuthorization = ::refresh,
+                                        stopTransport = { socket.getAndSet(null)?.close() },
+                                        stage = { message ->
+                                            withContext(Dispatchers.Main.immediate) {
+                                                publish(id, message)
+                                            }
+                                        },
+                                        preview = { value ->
+                                            withContext(Dispatchers.Main.immediate) {
+                                                status.value = status.value.copy(preview = value)
+                                            }
+                                        }
+                                    )
+                                }
+                                publish(id, "Controlled fixture task verified")
+                            }
                         }
                     } finally {
                         withContext(NonCancellable) {
@@ -218,6 +275,7 @@ class FixtureTaskService : Service() {
     companion object {
         internal const val NOTIFICATION = 7301
         private const val CHANNEL = "supervised-fixture-checks"
+        private const val CONTROL = "dev.buddy.fixture.CONTROL"
         private const val START = "dev.buddy.fixture.START"
         private const val STOP = "dev.buddy.fixture.STOP"
         private val status = MutableStateFlow(FixtureTaskStatus())
@@ -229,7 +287,20 @@ class FixtureTaskService : Service() {
                     .setData("buddy://fixture/$id".toUri())
             )
         }
-        internal fun start(activity: Activity, port: Int): Boolean {
+        internal fun move(activity: Activity, returning: Boolean): Boolean {
+            if (!activity.hasWindowFocus()) return false
+            val id = state.value.id ?: return false
+            return try {
+                activity.startService(
+                    Intent(activity, FixtureTaskService::class.java).setAction(CONTROL)
+                        .setData("buddy://fixture/$id".toUri()).putExtra("returning", returning)
+                )
+                true
+            } catch (_: RuntimeException) {
+                false
+            }
+        }
+        internal fun start(activity: Activity, port: Int, takeover: Boolean = false): Boolean {
             if (Build.VERSION.SDK_INT < 34 || !activity.hasWindowFocus() || port !in 1..65535 ||
                 state.value.id != null || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED ||
@@ -241,6 +312,7 @@ class FixtureTaskService : Service() {
                 activity.startForegroundService(
                     Intent(activity, FixtureTaskService::class.java).setAction(START)
                         .putExtra("run", UUID.randomUUID().toString()).putExtra("port", port)
+                        .putExtra("takeover", takeover)
                 )
                 true
             } catch (_: RuntimeException) {
