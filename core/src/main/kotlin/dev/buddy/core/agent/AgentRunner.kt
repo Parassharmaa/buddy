@@ -45,7 +45,7 @@ class AgentRunner(
     private val model: ChatModel,
     tools: List<AgentTool>,
     private val privacy: ObservationPrivacyGate,
-    private val verifyCompletion: suspend (String, List<String>) -> Boolean,
+    private val verifyCompletion: suspend (AgentCompletion) -> Boolean,
     private val persist: suspend (AgentCheckpoint) -> Unit,
     private val retainObservation: suspend (Observation) -> Unit,
     private val approvalFor: (dev.buddy.core.ActionProposal) -> Approval? = { null },
@@ -121,6 +121,9 @@ class AgentRunner(
         inbox: AgentInbox = AgentInbox()
     ): AgentCheckpoint {
         require(request.state in setOf(RunState.QUEUED, RunState.PREPARING))
+        require(request.id.isNotBlank() && request.id.length <= 128)
+        require(request.conversationId.isNotBlank() && request.conversationId.length <= 128)
+        require(history.size <= 512)
         require(request.request.isNotBlank() && request.request.length <= 8192)
         require(
             history.all {
@@ -136,22 +139,47 @@ class AgentRunner(
         }
     }
 
+    // Explicit continuation never replays the saved action and preserves cumulative budgets.
+    suspend fun resume(
+        saved: AgentCheckpoint,
+        config: ModelConfig,
+        answer: String,
+        inbox: AgentInbox = AgentInbox()
+    ): AgentCheckpoint {
+        val endpoint = ModelEndpoint.parse(config.baseUrl, config.localHttp)
+        val restored = CheckpointRecovery.restore(
+            saved,
+            answer,
+            AgentModelIdentity(endpoint.uri.toString(), config.model, config.localHttp),
+            SYSTEM
+        )
+        check(lock.tryLock()) { "An agent run is already active" }
+        try {
+            return Session(restored.run, config, emptyList(), restored.limits, inbox, restored).execute()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     private inner class Session(
         private val request: RunRecord,
         private val config: ModelConfig,
         history: List<ChatMessage>,
         private val limits: AgentLimits,
-        private val inbox: AgentInbox
+        private val inbox: AgentInbox,
+        restored: AgentCheckpoint? = null
     ) {
         private val started = now()
-        private var checkpoint = AgentCheckpoint(
+        private val previousActiveMillis = restored?.activeMillis ?: 0
+        private var needsFreshObservation = restored != null
+        private var checkpoint = restored ?: AgentCheckpoint(
             request,
             listOf(ChatMessage("system", SYSTEM)) + history + ChatMessage("user", request.request),
             limits = limits
         )
-        private val evidence = linkedSetOf<String>()
+        private val evidence = restored?.run?.evidenceIds.orEmpty().toMutableSet()
         private val pendingCalls = linkedSetOf<String>()
-        private val seenCalls = hashSetOf<String>()
+        private val seenCalls = checkpoint.messages.flatMap { it.toolCalls.orEmpty() }.map { it.id }.toMutableSet()
         private val observationDigests = hashMapOf<String, String>()
         private var errors = 0
         private var lastRead: String? = null
@@ -160,7 +188,7 @@ class AgentRunner(
         private var repeatedWrites = 0
         private var inAction = false
         private var activeActionCall: String? = null
-        private fun elapsed(): Long = (now() - started).coerceAtLeast(0)
+        private fun elapsed(): Long = previousActiveMillis + (now() - started).coerceAtLeast(0)
         private fun remaining(): Long = (limits.activeMillis - elapsed()).coerceAtLeast(0)
         private fun usage(): Long = checkpoint.confirmedTokens + checkpoint.estimatedTokens
         private fun bytes(messages: List<ChatMessage>): Int = json.encodeToString(
@@ -185,7 +213,10 @@ class AgentRunner(
         }
         private fun appendUpdates(updates: List<String> = inbox.drain()): Boolean {
             if (updates.isEmpty()) return false
-            checkpoint = checkpoint.copy(messages = checkpoint.messages + updates.map { ChatMessage("user", it) })
+            checkpoint = checkpoint.copy(
+                messages = checkpoint.messages + updates.map { ChatMessage("user", it) },
+                userUpdates = checkpoint.userUpdates + updates
+            )
             return true
         }
 
@@ -230,7 +261,9 @@ class AgentRunner(
 
                 is FilteredObservation.Allowed -> {
                     require(observation.id.isNotBlank() && observation.id.length <= 128)
-                    val digest = sha256(json.encodeToString(Observation.serializer(), observation))
+                    val encoded = json.encodeToString(Observation.serializer(), observation)
+                    require(encoded.toByteArray().size <= 128 * 1024)
+                    val digest = sha256(encoded)
                     val previous = observationDigests[observation.id]
                     require(previous == null || previous == digest) { "Observation IDs are immutable" }
                     if (previous == null) {
@@ -239,6 +272,7 @@ class AgentRunner(
                         observationDigests[observation.id] = digest
                     }
                     evidence += observation.id
+                    needsFreshObservation = false
                     val key = observation.app + ":" + observation.fingerprint
                     repeatedReads = if (key == lastRead) repeatedReads + 1 else 1
                     lastRead = key
@@ -271,6 +305,9 @@ class AgentRunner(
         }
 
         private suspend fun actionStep(tool: AgentTool, invocation: AgentInvocation.Action, callId: String): Step {
+            if (needsFreshObservation) {
+                return Step(body("observation_required", "Observe again after resuming"), error = true)
+            }
             val action = invocation.proposal
             require(
                 tool.effect != Effect.READ && action.effect == tool.effect &&
@@ -534,11 +571,19 @@ class AgentRunner(
                         }
                         val args = requireNotNull(arguments[call.id])
                         if (call.function.name == "end_task") {
+                            if (needsFreshObservation) {
+                                reply(call.id, body("observation_required", "Observe again after resuming"))
+                                errors++
+                                if (errors >= 3) return finish(RunState.BLOCKED, "A fresh observation is required")
+                                continue
+                            }
                             val ids = (args["evidence_ids"] as JsonArray).map { it.jsonPrimitive.content }
                             val outcome = args.getValue("outcome").jsonPrimitive.content
                             publish(RunState.VERIFYING, "Checking completion evidence")
                             if (ids.all { it in evidence } && withTimeoutOrNull(min(5_000, remaining())) {
-                                    verifyCompletion(outcome, ids)
+                                    verifyCompletion(
+                                        AgentCompletion(request.request, checkpoint.userUpdates, outcome, ids)
+                                    )
                                 } == true
                             ) {
                                 if (inbox.closeIfEmpty()) {

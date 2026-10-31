@@ -35,6 +35,8 @@ import org.junit.Assert.assertTrue
 internal object FixtureAgentProbe {
     suspend fun verify(workspace: FixtureWorkspace, store: EncryptedStore, runId: String) {
         val text = "Agent fixture · こんにちは · café"
+        val goal = "Set the fixture draft to $text"
+        val answer = "Continue the controlled fixture draft"
         var observed: Observation? = null
         val emptySchema = Json.parseToJsonElement(
             """{"type":"object","additionalProperties":false,"properties":{}}"""
@@ -50,6 +52,9 @@ internal object FixtureAgentProbe {
         val tools = listOf(
             tool("fixture_observe", Effect.READ) {
                 AgentInvocation.Read { workspace.observe().also { observed = it } }
+            },
+            tool("fixture_pause", Effect.READ) {
+                AgentInvocation.Pause(RunState.WAITING_FOR_USER, "Controlled fixture continuation")
             },
             tool("fixture_draft", Effect.DRAFT) {
                 val draft = workspace.prepareDraft(requireNotNull(observed), text)
@@ -77,8 +82,9 @@ internal object FixtureAgentProbe {
                 tools: List<JsonObject>
             ): ModelReply {
                 val name = when (turn++) {
-                    0 -> "fixture_observe"
-                    1 -> "fixture_draft"
+                    0, 2 -> "fixture_observe"
+                    1 -> "fixture_pause"
+                    3 -> "fixture_draft"
                     else -> "end_task"
                 }
                 val arguments = if (name == "end_task") {
@@ -106,26 +112,33 @@ internal object FixtureAgentProbe {
             model,
             tools,
             ObservationPrivacyGate(emptySet()),
-            verifyCompletion = { _, ids ->
+            verifyCompletion = { completion ->
                 verificationCount++
-                ids.all { store.get("evidence:$it") != null } &&
+                completion.goal == goal && completion.updates == listOf(answer) &&
+                    completion.evidenceIds.all { store.get("evidence:$it") != null } &&
                     workspace.observe().nodes.any { it.editable && it.label == text }
             },
             persist = { store.put("agent:$runId", "agent-checkpoint", Json.encodeToString(it)) },
             retainObservation = { store.put("evidence:${it.id}", "evidence", Json.encodeToString(it)) },
             now = SystemClock::elapsedRealtime
         )
-        val result = runner.run(
-            RunRecord(runId, "fixture", "Set the fixture draft to $text", createdAt = System.currentTimeMillis()),
-            ModelConfig("https://example.com/v1", "deterministic-fixture", ""),
-            limits = AgentLimits(modelRequests = 3, activeMillis = 10_000)
+        val config = ModelConfig("https://example.com/v1", "deterministic-fixture", "")
+        val paused = runner.run(
+            RunRecord(runId, "fixture", goal, createdAt = System.currentTimeMillis()),
+            config,
+            limits = AgentLimits(modelRequests = 5, activeMillis = 10_000)
         )
+        assertEquals(RunState.WAITING_FOR_USER, paused.run.state)
+        val saved = Json.decodeFromString<AgentCheckpoint>(requireNotNull(store.get("agent:$runId")))
+        assertEquals(RunState.WAITING_FOR_USER, saved.run.state)
+        val result = runner.resume(saved, config, answer)
         assertEquals("Agent stopped: ${result.run.summary}", RunState.DONE, result.run.state)
         assertEquals(1, verificationCount)
-        assertEquals(3, result.modelRequests)
+        assertEquals(5, result.modelRequests)
         assertTrue(result.run.evidenceIds.isNotEmpty())
         val restored = Json.decodeFromString<AgentCheckpoint>(requireNotNull(store.get("agent:$runId")))
         assertEquals(RunState.DONE, restored.run.state)
         assertEquals(result.run.evidenceIds, restored.run.evidenceIds)
+        assertEquals(listOf(answer), restored.userUpdates)
     }
 }

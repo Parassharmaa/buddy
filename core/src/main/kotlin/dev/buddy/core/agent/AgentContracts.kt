@@ -34,6 +34,7 @@ data class AgentCheckpoint(
     val messages: List<ChatMessage>,
     val limits: AgentLimits = AgentLimits(),
     val model: AgentModelIdentity? = null,
+    val userUpdates: List<String> = emptyList(),
     val modelRequests: Int = 0,
     val confirmedTokens: Long = 0,
     val estimatedTokens: Long = 0,
@@ -58,6 +59,13 @@ interface AgentTool {
     fun validate(arguments: JsonObject)
     suspend fun prepare(arguments: JsonObject): AgentInvocation
 }
+
+data class AgentCompletion(
+    val goal: String,
+    val updates: List<String>,
+    val claimedOutcome: String,
+    val evidenceIds: List<String>
+)
 
 class AgentDispatchContext internal constructor(val approval: Approval?, private val current: () -> Boolean) {
     // The adapter must check this again in ActionExecutor's final dispatch gate.

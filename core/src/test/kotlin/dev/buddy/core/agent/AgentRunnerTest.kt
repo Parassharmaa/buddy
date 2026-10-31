@@ -106,7 +106,7 @@ class AgentRunnerTest {
         model,
         tools,
         ObservationPrivacyGate(emptySet()),
-        verify,
+        { verify(it.claimedOutcome, it.evidenceIds) },
         { saved += it },
         { retained += it },
         now = clock
@@ -571,7 +571,7 @@ class AgentRunnerTest {
             model,
             listOf(read),
             ObservationPrivacyGate(emptySet()),
-            { _, _ -> true },
+            { true },
             persist = {
                 if (!offered && it.run.summary == "Validated model request") {
                     offered = true
@@ -599,5 +599,170 @@ class AgentRunnerTest {
         assertTrue(inbox.closeIfEmpty())
         assertFalse(inbox.offer("Belongs to a later run"))
         assertTrue(inbox.closeAndDrain().isEmpty())
+    }
+
+    private suspend fun paused(limits: AgentLimits = AgentLimits()): AgentCheckpoint {
+        val ask = tool("ask") { AgentInvocation.Pause(RunState.WAITING_FOR_USER, "Fixture input required") }
+        return runner(Model { if (it == 0) calls("observe") else calls("ask") }, listOf(tool(), ask))
+            .run(request, config, limits = limits)
+    }
+
+    @Test fun resumeRequiresANewObservationBeforeAcceptingOldCompletionEvidence() = runTest {
+        val saved = paused()
+        var verified = false
+        val model = Model { finish() }
+        val result = runner(model, verify = { _, _ ->
+            verified = true
+            true
+        }).resume(saved, config, "Continue after checking the app")
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertFalse(verified)
+        assertEquals(saved.modelRequests + 3, result.modelRequests)
+    }
+
+    @Test fun resumePreservesTheGoalAndEvidenceAndCanCompleteAfterReobservation() = runTest {
+        val saved = paused()
+        val fresh = observation.copy(id = "o2", revision = 2)
+        val model = Model { if (it == 0) calls("observe") else finish("o2") }
+        val result = runner(model, listOf(tool { AgentInvocation.Read { fresh } }))
+            .resume(saved, config, "I have finished the manual step")
+        assertEquals(RunState.DONE, result.run.state)
+        assertEquals(saved.run.id, result.run.id)
+        assertEquals(saved.run.request, result.run.request)
+        assertEquals(listOf("o1", "o2"), result.run.evidenceIds)
+        assertEquals(saved.modelRequests + 2, result.modelRequests)
+        assertTrue(model.requests.first().any { it.content == "I have finished the manual step" })
+    }
+
+    @Test fun resumingCannotResetTheModelRequestOrActiveTimeBudget() = runTest {
+        val saved = paused(AgentLimits(modelRequests = 3))
+        val fresh = tool { AgentInvocation.Read { observation.copy(id = "o2") } }
+        val model = Model { calls("observe") }
+        val result = runner(model, listOf(fresh)).resume(saved, config, "Continue")
+        assertEquals(RunState.PARTIAL, result.run.state)
+        assertEquals(3, result.modelRequests)
+        assertEquals(1, model.calls)
+        val waiting = paused().copy(activeMillis = 9, limits = AgentLimits(activeMillis = 10))
+        val slowModel = Model {
+            delay(5)
+            calls("observe")
+        }
+        val expired = runner(slowModel, clock = { testScheduler.currentTime }).resume(waiting, config, "Continue")
+        assertEquals(RunState.PARTIAL, expired.run.state)
+        assertEquals(10L, expired.activeMillis)
+        assertEquals(listOf("o1"), expired.run.evidenceIds)
+    }
+
+    @Test fun resumeNeverTreatsAnAnswerAsConsentOrReplaysThePendingSend() = runTest {
+        var writes = 0
+        val send = tool("send", Effect.SEND) {
+            AgentInvocation.Action(action.copy(effect = Effect.SEND)) {
+                writes++
+                ExecutionResult.Verified(listOf("e1"))
+            }
+        }
+        val initial = runner(
+            Model { if (it == 0) calls("observe") else calls("send") },
+            listOf(tool(), send)
+        ).run(request, config)
+        assertEquals(RunState.WAITING_FOR_APPROVAL, initial.run.state)
+        val fresh = tool { AgentInvocation.Read { observation.copy(id = "o2") } }
+        val resumed = runner(Model { if (it == 0) calls("observe") else calls("send") }, listOf(fresh, send))
+            .resume(initial, config, "Yes, continue")
+        assertEquals(RunState.WAITING_FOR_APPROVAL, resumed.run.state)
+        assertEquals(0, writes)
+        assertTrue(resumed.pendingAction != null)
+    }
+
+    @Test fun interruptedPendingCallsGetUnknownOutcomeResultsInsteadOfReplay() = runTest {
+        val saved = paused().let {
+            it.copy(run = it.run.copy(state = RunState.INTERRUPTED), messages = it.messages.dropLast(1))
+        }
+        var reads = 0
+        val read = tool {
+            reads++
+            AgentInvocation.Read { observation }
+        }
+        val model = Model { ModelReply(ChatMessage("assistant", "Inspect before continuing"), 10, "stop") }
+        val result = runner(model, listOf(read)).resume(saved, config, "Inspect the interrupted task")
+        assertEquals(RunState.PARTIAL, result.run.state)
+        assertEquals(0, reads)
+        val context = model.requests.single()
+        assertEquals(listOf("tool", "user"), context.takeLast(2).map { it.role })
+        assertTrue(context[context.lastIndex - 1].content.orEmpty().contains("interrupted"))
+    }
+
+    @Test fun changedProvidersTerminalStatesAndMalformedCheckpointsCannotResume() = runTest {
+        val saved = paused()
+        val model = Model { calls("observe") }
+        val agent = runner(model)
+        val invalid = listOf(
+            saved.copy(run = saved.run.copy(state = RunState.UNKNOWN)),
+            saved.copy(run = saved.run.copy(state = RunState.DONE)),
+            saved.copy(modelRequests = -1),
+            saved.copy(messages = saved.messages.dropLast(1) + saved.messages.last().copy(toolCallId = "orphan"))
+        )
+        invalid.forEach {
+            assertTrue(
+                runCatching {
+                    agent.resume(it, config, "Continue")
+                }.exceptionOrNull() is IllegalArgumentException
+            )
+        }
+        assertTrue(
+            runCatching { agent.resume(saved, config.copy(baseUrl = "https://other.example/v1"), "Continue") }
+                .exceptionOrNull() is IllegalArgumentException
+        )
+        assertEquals(0, model.calls)
+    }
+
+    @Test fun startingRunRecordsCannotSupplyInventedCompletionEvidence() = runTest {
+        var verified = false
+        val result = runner(Model { finish("forged") }, verify = { _, _ ->
+            verified = true
+            true
+        }).run(request.copy(evidenceIds = listOf("forged")), config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertFalse(verified)
+        assertTrue(result.run.evidenceIds.isEmpty())
+    }
+
+    @Test fun oversizedObservationMetadataIsRejectedBeforeRetentionOrModelUse() = runTest {
+        val retained = mutableListOf<Observation>()
+        val large = observation.copy(
+            nodes = (1..2000).map {
+                observation.nodes.single().copy(id = "node$it", label = "")
+            }
+        )
+        val result = runner(
+            Model { calls("observe") },
+            listOf(tool { AgentInvocation.Read { large } }),
+            retained = retained
+        ).run(request, config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertTrue(retained.isEmpty())
+        assertTrue(result.run.evidenceIds.isEmpty())
+    }
+
+    @Test fun theCompletionVerifierReceivesTheOriginalGoalAndExplicitResumeInstructions() = runTest {
+        val saved = paused()
+        var verified: AgentCompletion? = null
+        val model = Model { if (it == 0) calls("observe") else finish("o2") }
+        val agent = AgentRunner(
+            model,
+            listOf(tool { AgentInvocation.Read { observation.copy(id = "o2") } }),
+            ObservationPrivacyGate(emptySet()),
+            verifyCompletion = {
+                verified = it
+                it.goal == request.request && it.updates == listOf("Also verify the manual step")
+            },
+            persist = {},
+            retainObservation = {},
+            now = { 0 }
+        )
+        val result = agent.resume(saved, config, "Also verify the manual step")
+        assertEquals(RunState.DONE, result.run.state)
+        assertEquals(listOf("o2"), verified?.evidenceIds)
+        assertEquals(listOf("Also verify the manual step"), result.userUpdates)
     }
 }

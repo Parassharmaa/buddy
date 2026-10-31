@@ -31,21 +31,37 @@ class AgentCoordinator {
         config: ModelConfig,
         history: List<ChatMessage> = emptyList(),
         limits: AgentLimits = AgentLimits()
+    ): AgentCheckpoint = coordinate(request.conversationId) { inbox ->
+        runner.run(request, config, history, limits, inbox)
+    }
+
+    suspend fun resume(
+        runner: AgentRunner,
+        checkpoint: AgentCheckpoint,
+        config: ModelConfig,
+        answer: String
+    ): AgentCheckpoint = coordinate(checkpoint.run.conversationId) { inbox ->
+        runner.resume(checkpoint, config, answer, inbox)
+    }
+
+    private suspend fun coordinate(
+        conversationId: String,
+        operation: suspend (AgentInbox) -> AgentCheckpoint
     ): AgentCheckpoint = coroutineScope {
-        require(request.conversationId.isNotBlank() && request.conversationId.length <= 128)
+        require(conversationId.isNotBlank() && conversationId.length <= 128)
         val inbox = AgentInbox()
         // Registration happens before the child can ask a model or dispatch any tool.
-        val task = async(start = CoroutineStart.LAZY) { runner.run(request, config, history, limits, inbox) }
+        val task = async(start = CoroutineStart.LAZY) { operation(inbox) }
         synchronized(lock) {
-            check(request.conversationId !in active) { "This conversation already has an active run" }
-            active[request.conversationId] = Active(inbox, task)
+            check(conversationId !in active) { "This conversation already has an active run" }
+            active[conversationId] = Active(inbox, task)
         }
         try {
             task.start()
             task.await()
         } finally {
             synchronized(lock) {
-                if (active[request.conversationId]?.task === task) active.remove(request.conversationId)
+                if (active[conversationId]?.task === task) active.remove(conversationId)
             }
         }
     }
