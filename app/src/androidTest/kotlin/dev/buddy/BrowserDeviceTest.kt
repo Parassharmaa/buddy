@@ -15,12 +15,19 @@ import dev.buddy.storage.ArtifactReadBudget
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.Executors
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -57,6 +64,19 @@ class BrowserDeviceTest {
                                 }
                             }
                             val content = when (path.substringBefore('?')) {
+                                "/upload" ->
+                                    "<button id='pick' style='width:240px;height:80px' " +
+                                        "onclick=\"window.fixtureClicks=(window.fixtureClicks||0)+1;" +
+                                        "document.getElementById('upload').click()\">" +
+                                        "Choose synthetic file</button>" +
+                                        "<input id='upload' type='file' accept='.txt'>" +
+                                        "<script>window.uploadResults=[];" +
+                                        "document.getElementById('upload').addEventListener('change',function(){" +
+                                        "if(!this.files[0])return;const r=new FileReader();" +
+                                        "r.onload=()=>window.uploadResults.push(r.result);" +
+                                        "r.onerror=()=>window.uploadResults.push('READ_FAILED');" +
+                                        "r.readAsText(this.files[0]);});</script>"
+
                                 "/captcha" ->
                                     "<div class='one\tg-recaptcha\ntwo' style='width:100px;height:40px'>Synthetic challenge</div>"
 
@@ -81,7 +101,9 @@ class BrowserDeviceTest {
                                 "%PDF-1.7 Synthetic browser download".toByteArray()
                             } else {
                                 (
-                                    "<!doctype html><html><head><title>Fixture page</title></head><body>" +
+                                    "<!doctype html><html><head>" +
+                                        "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                                        "<title>Fixture page</title></head><body>" +
                                         content + "</body></html>"
                                     ).toByteArray()
                             }
@@ -393,6 +415,176 @@ class BrowserDeviceTest {
                     }
                 }
             } finally {
+                store.clear()
+            }
+        }
+    }
+
+    private suspend fun script(view: android.webkit.WebView, expression: String): String =
+        withContext(Dispatchers.Main) {
+            withTimeout(2_000) {
+                suspendCancellableCoroutine { continuation ->
+                    view.evaluateJavascript(expression) { value ->
+                        if (continuation.isActive) continuation.resume(value)
+                    }
+                }
+            }
+        }
+
+    @Test(timeout = 60_000)
+    fun browserUploadAcceptsOnlyAnExplicitPrivateWorkspaceFileAndKeepsThePagePrivate() = runBlocking {
+        org.junit.Assume.assumeTrue(
+            InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
+                android.os.Build.HARDWARE == "ranchu" && android.os.Build.FINGERPRINT.contains("sdk_gphone")
+        )
+        withBrowser { activity, pages ->
+            val store = (activity.application as BuddyApplication).store
+            val resolver = activity.contentResolver
+            var outside: android.net.Uri? = null
+            store.clear()
+            try {
+                val workspace = java.util.UUID.randomUUID().toString()
+                store.put(
+                    "conversation:$workspace",
+                    "conversation",
+                    Json.encodeToString(dev.buddy.core.Conversation(workspace, "Synthetic upload"))
+                )
+                val approved = "Synthetic approved upload · café · こんにちは"
+                val artifact = store.artifacts.importFile(
+                    workspace,
+                    "approved.txt",
+                    "text/plain",
+                    android.net.Uri.parse("content://fixture/upload"),
+                    approved.toByteArray()
+                )
+                val unapproved = requireNotNull(
+                    resolver.insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "buddy-unapproved-upload.txt")
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                    )
+                ).also { outside = it }
+                dev.buddy.files.DocumentAccess(activity).write(unapproved, "Outside workspace canary".toByteArray())
+                resolver.update(
+                    unapproved,
+                    android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                    },
+                    null,
+                    null
+                )
+                withContext(Dispatchers.Main) { activity.session.navigate(WebAddress.parse(pages.origin + "/upload")) }
+                withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
+                val view = withContext(Dispatchers.Main) {
+                    val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                    root.getChildAt(0) as android.webkit.WebView
+                }
+                var stage = "FIRST_CHOOSER"
+                suspend fun choose() {
+                    withContext(Dispatchers.Main) {
+                        withTimeout(2_000) {
+                            suspendCancellableCoroutine { continuation ->
+                                view.postVisualStateCallback(
+                                    0,
+                                    object : android.webkit.WebView.VisualStateCallback() {
+                                        override fun onComplete(requestId: Long) {
+                                            if (continuation.isActive) continuation.resume(Unit)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        assertTrue("Upload fixture is not visible", view.isShown)
+                        assertTrue("Upload fixture has no input focus", view.hasWindowFocus())
+                    }
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                    val device = androidx.test.uiautomator.UiDevice.getInstance(
+                        InstrumentationRegistry.getInstrumentation()
+                    )
+                    val button = requireNotNull(
+                        device.wait(
+                            androidx.test.uiautomator.Until.findObject(
+                                androidx.test.uiautomator.By.text("Choose synthetic file")
+                            ),
+                            2_000
+                        )
+                    ) { "Upload fixture button is absent from the current window" }
+                    assertEquals(activity.packageName, button.applicationPackage)
+                    val bounds = button.visibleBounds
+                    withContext(Dispatchers.Main) {
+                        val position = IntArray(2).also(view::getLocationOnScreen)
+                        val metrics = activity.windowManager.currentWindowMetrics
+                        val bars = metrics.windowInsets.getInsets(
+                            android.view.WindowInsets.Type.systemBars() or
+                                android.view.WindowInsets.Type.displayCutout()
+                        )
+                        val safe = android.graphics.Rect(metrics.bounds).apply {
+                            left += bars.left
+                            top += bars.top
+                            right -= bars.right
+                            bottom -= bars.bottom
+                        }
+                        assertTrue(
+                            "Upload fixture button overlaps system UI",
+                            safe.contains(bounds.centerX(), bounds.centerY())
+                        )
+                        assertTrue(bounds.width() > 0 && bounds.height() > 0)
+                        assertTrue(
+                            android.graphics.Rect(
+                                position[0],
+                                position[1],
+                                position[0] + view.width,
+                                position[1] + view.height
+                            ).contains(bounds.centerX(), bounds.centerY())
+                        )
+                    }
+                    button.click()
+                    try {
+                        withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
+                    } catch (failure: Exception) {
+                        throw AssertionError("Upload chooser did not open at $stage", failure)
+                    }
+                }
+                choose()
+                withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(unapproved)) }
+                withTimeout(2_000) { activity.session.state.first { !it.hasUploadRequest } }
+                assertEquals(
+                    1,
+                    Json.parseToJsonElement(script(view, "window.fixtureClicks||0")).jsonPrimitive.content.toInt()
+                )
+                stage = "SECOND_CHOOSER"
+                choose()
+                val uri = android.net.Uri.Builder().scheme("content").authority(activity.packageName + ".artifacts")
+                    .appendPath(workspace).appendPath(artifact.id).build()
+                withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(uri)) }
+                try {
+                    withTimeout(5_000) {
+                        while (true) {
+                            val values = Json.parseToJsonElement(
+                                Json.parseToJsonElement(
+                                    script(view, "JSON.stringify(window.uploadResults)")
+                                ).jsonPrimitive.content
+                            ).jsonArray
+                            if (values.isNotEmpty()) {
+                                assertEquals(listOf(approved), values.map { it.jsonPrimitive.content })
+                                break
+                            }
+                            delay(20)
+                        }
+                    }
+                } catch (failure: Exception) {
+                    throw AssertionError("Approved upload did not produce readable fixture bytes", failure)
+                }
+                assertEquals(
+                    2,
+                    Json.parseToJsonElement(script(view, "window.fixtureClicks||0")).jsonPrimitive.content.toInt()
+                )
+                assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), activity.session.observe(pages.origin))
+            } finally {
+                outside?.let { resolver.delete(it, null, null) }
                 store.clear()
             }
         }
