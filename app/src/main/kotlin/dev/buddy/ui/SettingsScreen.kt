@@ -183,6 +183,10 @@ import dev.buddy.storage.HistoryRetention
             }
 
             "Privacy" -> {
+                if (state.clearingData) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                    Text("Deleting local data and website storage…")
+                }
                 Text("Your provider: " + if (state.configured) state.modelBase else "Not configured")
                 Text(
                     "Model keys, conversations, files and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
