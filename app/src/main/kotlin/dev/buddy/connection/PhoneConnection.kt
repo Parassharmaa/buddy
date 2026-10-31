@@ -99,10 +99,11 @@ class PhoneConnection(private val context: Context) {
         var connectedDuringAttempt: IBuddyHelper? = null
         try {
             withContext(Dispatchers.IO) {
-                if (synchronized(stateLock) { helper?.asBinder()?.isBinderAlive == true }) {
-                    update(ticket) { _status.value = "Helper already connected; device qualification is pending" }
-                    return@withContext
-                }
+                // Binder liveness is not proof that the bounded debugging authorization is still valid.
+                // An explicit reconnect revokes the previous helper and performs a new daemon handshake.
+                val previous = synchronized(stateLock) { helper.also { helper = null } }
+                previous?.let { runCatching { it.disconnect() } }
+                currentCoroutineContext().ensureActive()
                 val client = AdbTransport(identity)
                 if (!update(ticket) {
                         transport = client
