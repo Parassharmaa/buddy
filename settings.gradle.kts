@@ -24,5 +24,6 @@ include(
     ":phone",
     ":storage",
     ":designsystem",
-    ":fixture"
+    ":fixture",
+    ":browser"
 )

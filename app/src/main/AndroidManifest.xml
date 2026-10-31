@@ -7,7 +7,7 @@
         <package android:name="dev.buddy.fixture" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
-    <!-- HTTP is allowed only for explicitly enabled canonical private IP/localhost model endpoints by ModelEndpoint. ADB always uses TLS. -->
+    <!-- ModelEndpoint restricts HTTP model traffic to explicitly enabled local endpoints. Browser URLs have a separate HTTP/HTTPS boundary. ADB uses TLS. -->
     <application android:name=".BuddyApplication" android:label="Buddy" android:icon="@drawable/ic_buddy" android:theme="@style/Theme.Buddy" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:usesCleartextTraffic="true" tools:ignore="CleartextTrafficPermitted" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>

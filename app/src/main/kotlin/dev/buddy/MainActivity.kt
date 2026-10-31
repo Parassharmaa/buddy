@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             BuddyTheme {
                 val model: BuddyViewModel =
-                    viewModel { BuddyViewModel(app.store, PhoneConnection(app), DocumentAccess(app)) }
+                    viewModel { BuddyViewModel(app.store, PhoneConnection(app), DocumentAccess(app), app) }
                 BuddyApp(model)
             }
         }

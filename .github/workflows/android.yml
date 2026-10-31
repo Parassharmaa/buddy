@@ -40,7 +40,7 @@ jobs:
           printf 'BUDDY_DEBUG_KEYSTORE=%s\n' "$RUNNER_TEMP/buddy-debug.keystore" >> "$GITHUB_ENV"
       - name: Tests, Kotlin style, Android lint and APKs
         run: |
-          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :shell-helper:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process lintKotlin :core:test :browser:testDebugUnitTest :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :shell-helper:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
           ./gradlew --no-daemon --no-parallel --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:assembleRelease :fixture:assembleRelease lintRelease
       - name: Verify APK signatures, alignment and optimized entry points
         run: |

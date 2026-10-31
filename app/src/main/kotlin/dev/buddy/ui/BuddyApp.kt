@@ -44,7 +44,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.buddy.BuddyViewModel
 
-private enum class Destination(val label: String) { CHAT("Chat"), ACTIVITY("Activity"), SETTINGS("Settings") }
+private enum class Destination(val label: String) {
+    CHAT(
+        "Chat"
+    ),
+    BROWSER("Browser"),
+    ACTIVITY("Activity"),
+    SETTINGS("Settings")
+}
 
 @Composable fun BuddyApp(model: BuddyViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
@@ -105,6 +112,8 @@ private enum class Destination(val label: String) { CHAT("Chat"), ACTIVITY("Acti
                             FilesPanel(state, model)
                         }
 
+                        Destination.BROWSER -> BrowserScreen(model.browser, state.artifacts)
+
                         Destination.ACTIVITY -> Activity(state.history, {
                             model.openConversation(it)
                             destination =
@@ -157,6 +166,26 @@ private enum class Destination(val label: String) { CHAT("Chat"), ACTIVITY("Acti
                     style = stroke
                 )
                 drawLine(color, Offset(8.dp.toPx(), 18.dp.toPx()), Offset(5.dp.toPx(), 22.dp.toPx()), 1.8.dp.toPx())
+            }
+
+            Destination.BROWSER -> {
+                drawCircle(
+                    color,
+                    radius = size.minDimension * 0.36f,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                )
+                drawLine(
+                    color,
+                    Offset(size.width * 0.14f, size.height / 2),
+                    Offset(size.width * 0.86f, size.height / 2),
+                    strokeWidth = 2.dp.toPx()
+                )
+                drawLine(
+                    color,
+                    Offset(size.width / 2, size.height * 0.14f),
+                    Offset(size.width / 2, size.height * 0.86f),
+                    strokeWidth = 2.dp.toPx()
+                )
             }
 
             Destination.ACTIVITY -> {

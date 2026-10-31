@@ -51,6 +51,9 @@ class SetupUiTest {
         compose.onNodeWithText("Diagnostics").performClick()
         compose.onNodeWithText("Diagnostics").assertIsDisplayed()
         screenshot("05-diagnostics")
+        compose.onNodeWithText("Browser").performClick()
+        compose.onNodeWithText("Website address").assertIsDisplayed()
+        screenshot("06-browser")
     }
 
     private fun screenshot(name: String) {
