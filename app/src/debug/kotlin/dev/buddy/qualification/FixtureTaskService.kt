@@ -45,7 +45,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 
-internal data class FixtureTaskStatus(val id: String? = null, val message: String = "No supervised check running")
+internal data class FixtureTaskStatus(
+    val id: String? = null,
+    val message: String = "No supervised check running",
+    val preview: FixturePreview? = null
+)
 
 class FixtureTaskService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -141,6 +145,11 @@ class FixtureTaskService : Service() {
                                         withContext(Dispatchers.Main.immediate) {
                                             publish(id, message)
                                         }
+                                    },
+                                    preview = { value ->
+                                        withContext(Dispatchers.Main.immediate) {
+                                            status.value = status.value.copy(preview = value)
+                                        }
                                     }
                                 )
                             }
@@ -148,6 +157,7 @@ class FixtureTaskService : Service() {
                         }
                     } finally {
                         withContext(NonCancellable) {
+                            status.value = status.value.copy(preview = null)
                             monitor.cancelAndJoin()
                             phone.disconnect()
                         }
@@ -175,7 +185,7 @@ class FixtureTaskService : Service() {
     }
     private fun publish(id: String, message: String) {
         check(runId == id && notificationsAllowed())
-        status.value = FixtureTaskStatus(id, message)
+        status.value = status.value.copy(id = id, message = message)
         manager.notify(NOTIFICATION, notification(id, message))
     }
     private fun notification(id: String, message: String): Notification {

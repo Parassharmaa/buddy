@@ -84,6 +84,8 @@ class PhoneQualificationActivity : ComponentActivity() {
     private var networkAllowed by mutableStateOf(false)
     private var notificationsAllowed by mutableStateOf(false)
     private var port by mutableStateOf("")
+    internal var preview by mutableStateOf<FixturePreview?>(null)
+        private set
     private var status by mutableStateOf("Ready for a foreground-only engineering check")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -187,6 +189,7 @@ class PhoneQualificationActivity : ComponentActivity() {
                                 Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
                     ) { Text("Run model check with notification") }
                     Text(supervised.message)
+                    FixturePreviewCard(if (supervised.id != null) supervised.preview else preview)
                     if (supervised.id != null) {
                         TextButton(onClick = { FixtureTaskService.stop(this@PhoneQualificationActivity) }) {
                             Text("Stop supervised check")
@@ -242,7 +245,8 @@ class PhoneQualificationActivity : ComponentActivity() {
             stage = { value ->
                 withContext(Dispatchers.Main.immediate) { status = value }
                 onStage(value)
-            }
+            },
+            preview = { value -> withContext(Dispatchers.Main.immediate) { preview = value } }
         )
     }
     internal fun isCheckVisible(): Boolean = visible.get() && focused.get() && permit?.isCurrent != false
@@ -266,11 +270,13 @@ class PhoneQualificationActivity : ComponentActivity() {
                     )
                 },
                 stopTransport = { socket.getAndSet(null)?.close() },
-                stage = { value -> withContext(Dispatchers.Main.immediate) { status = value } }
+                stage = { value -> withContext(Dispatchers.Main.immediate) { status = value } },
+                preview = { value -> withContext(Dispatchers.Main.immediate) { preview = value } }
             )
         }
     }
     private fun stopCheck() {
+        preview = null
         running?.cancel()
     }
     private fun startCheck(useModel: Boolean = false) {
