@@ -465,36 +465,42 @@ class BuddyViewModel(
             it.copy(loaded = false, clearingData = true, configured = false, active = false, testingModel = false)
         }
         viewModelScope.launch {
-            pendingModel?.join()
-            pendingSource?.join()
-            pendingFiles?.join()
-            pendingMemory?.join()
-            pendingLoad?.join()
-            pendingTest?.join()
-            val identityRemoved = phone.disconnect(true)
-            try {
-                schedules.clear()
-                browser.clearData()
-                applicationContext?.let { dev.buddy.files.ArtifactProvider.revokeAll(it) }
-                persistence.withLock { store.clear() }
-                schedules.cleared()
-                config = null
-                _state.value = BuddyState(
-                    error = if (identityRemoved) {
-                        null
-                    } else {
-                        "Local data was cleared, but the debugging identity could not be removed. " +
-                            "Try Forget again in Phone connection."
+            EngineeringSessions.supervisor.quiesce {
+                pendingModel?.join()
+                pendingSource?.join()
+                pendingFiles?.join()
+                pendingMemory?.join()
+                pendingLoad?.join()
+                pendingTest?.join()
+                val identityRemoved = phone.disconnect(true)
+                try {
+                    schedules.clear()
+                    browser.clearData()
+                    applicationContext?.let { dev.buddy.files.ArtifactProvider.revokeAll(it) }
+                    persistence.withLock { store.clear() }
+                    schedules.cleared()
+                    config = null
+                    _state.value = BuddyState(
+                        error = if (identityRemoved) {
+                            null
+                        } else {
+                            "Local data was cleared, but the debugging identity could not be removed. " +
+                                "Try Forget again in Phone connection."
+                        }
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _state.update {
+                        it.copy(
+                            loaded = false,
+                            clearingData = false,
+                            error = "Local data could not be cleared. Try again."
+                        )
                     }
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                _state.update {
-                    it.copy(loaded = false, clearingData = false, error = "Local data could not be cleared. Try again.")
                 }
+                loadRecords()
             }
-            loadRecords()
         }
     }
     fun exportConversation(expectedId: String, uri: Uri) = files.exportConversation(expectedId, uri)
@@ -553,7 +559,7 @@ class BuddyViewModel(
         }
     }
     fun disconnect(forget: Boolean = false) {
-        viewModelScope.launch { phone.disconnect(forget) }
+        viewModelScope.launch { EngineeringSessions.supervisor.quiesce { phone.disconnect(forget) } }
     }
     override fun onCleared() {
         memory.cancel()

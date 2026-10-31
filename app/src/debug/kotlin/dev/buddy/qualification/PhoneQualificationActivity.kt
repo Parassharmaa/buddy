@@ -45,12 +45,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import dev.buddy.BuddyApplication
+import dev.buddy.EngineeringSessions
 import dev.buddy.adb.AdbIdentity
 import dev.buddy.adb.AdbTransport
 import dev.buddy.connection.DaemonAuthorization
 import dev.buddy.connection.PhoneConnection
 import dev.buddy.core.LoopbackPort
 import dev.buddy.core.ModelConfig
+import dev.buddy.core.agent.SessionSupervisor
 import dev.buddy.core.model.ModelClient
 import dev.buddy.design.BuddyTheme
 import dev.buddy.phone.FixtureScreenService
@@ -73,6 +75,8 @@ class PhoneQualificationActivity : ComponentActivity() {
     private lateinit var physical: EditText
     private var edits = 0
     private var running: Job? = null
+
+    @Volatile private var permit: SessionSupervisor.Permit? = null
     private var busy by mutableStateOf(false)
     private var connected by mutableStateOf(false)
     private var networkAllowed by mutableStateOf(false)
@@ -199,7 +203,7 @@ class PhoneQualificationActivity : ComponentActivity() {
             }
         )
     }
-    internal fun isCheckVisible(): Boolean = visible.get() && focused.get()
+    internal fun isCheckVisible(): Boolean = visible.get() && focused.get() && permit?.isCurrent != false
     private suspend fun runConnectedModel(helper: IBuddyHelper, config: ModelConfig, port: LoopbackPort) {
         val socket = AtomicReference<AdbTransport?>()
         val authorization = DaemonAuthorization(applicationContext, AdbIdentity())
@@ -238,29 +242,40 @@ class PhoneQualificationActivity : ComponentActivity() {
         physical.requestFocus()
         running = lifecycleScope.launch {
             try {
-                val config = if (useModel) {
-                    withContext(Dispatchers.IO) {
-                        (application as BuddyApplication).store.get("model-config")?.let {
-                            Json.decodeFromString<ModelConfig>(it)
+                EngineeringSessions.supervisor.supervise session@{ current ->
+                    permit = current
+                    try {
+                        val config = if (useModel) {
+                            withContext(Dispatchers.IO) {
+                                (application as BuddyApplication).store.get("model-config")?.let {
+                                    Json.decodeFromString<ModelConfig>(it)
+                                }
+                            } ?: run {
+                                status = "Save and test a model in Settings first."
+                                return@session
+                            }
+                        } else {
+                            null
                         }
-                    } ?: run {
-                        status = "Save and test a model in Settings first."
-                        return@launch
-                    }
-                } else {
-                    null
-                }
-                status = "Connecting to local wireless debugging"
-                withTimeout(30_000) { phone.connect(selected) }
-                if (config != null) {
-                    runConnectedModel(phone.engineeringHelper(), config, LoopbackPort(selected))
-                    status = "Configured model completed the controlled fixture task. Full M0 qualification is pending."
-                } else {
-                    val result = runConnectedCheck(phone.engineeringHelper())
-                    status = if (result.concurrentTypingObserved) {
-                        "Foreground checks passed; concurrent physical typing was observed. Full M0 qualification is pending."
-                    } else {
-                        "Foreground checks passed. Concurrent typing was not assessed; full M0 qualification is pending."
+                        status = "Connecting to local wireless debugging"
+                        withTimeout(30_000) { phone.connect(selected) }
+                        if (config != null) {
+                            runConnectedModel(phone.engineeringHelper(), config, LoopbackPort(selected))
+                            status =
+                                "Configured model completed the controlled fixture task. Full M0 qualification is pending."
+                        } else {
+                            val result = runConnectedCheck(phone.engineeringHelper())
+                            status = if (result.concurrentTypingObserved) {
+                                "Foreground checks passed; concurrent physical typing was observed. Full M0 qualification is pending."
+                            } else {
+                                "Foreground checks passed. Concurrent typing was not assessed; full M0 qualification is pending."
+                            }
+                        }
+                    } finally {
+                        withContext(NonCancellable + Dispatchers.Main.immediate) {
+                            phone.disconnect()
+                            permit = null
+                        }
                     }
                 }
             } catch (cancelled: CancellationException) {
@@ -271,7 +286,6 @@ class PhoneQualificationActivity : ComponentActivity() {
                     "This device could not complete the foreground check. Check pairing, fixture access and APK versions."
             } finally {
                 withContext(NonCancellable + Dispatchers.Main.immediate) {
-                    phone.disconnect()
                     busy = false
                     running = null
                 }
