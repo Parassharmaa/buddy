@@ -18,6 +18,9 @@ class BuddyApplication :
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().build()
     val store by lazy { EncryptedStore(this) }
+    val scheduleNotifications by lazy {
+        dev.buddy.scheduling.ScheduleNotifications(this, store.schedules::current)
+    }
     val schedules by lazy { ScheduleCoordinator(this, store.schedules) }
     override fun onCreate() {
         super.onCreate()

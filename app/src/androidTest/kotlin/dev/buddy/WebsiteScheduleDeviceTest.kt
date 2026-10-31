@@ -60,7 +60,8 @@ class WebsiteScheduleDeviceTest {
                     local.hour,
                     local.minute,
                     zone.id,
-                    localHttp = true
+                    localHttp = true,
+                    notify = true
                 ),
                 due.minusSeconds(1),
                 zone
@@ -75,6 +76,14 @@ class WebsiteScheduleDeviceTest {
             server.get(5, java.util.concurrent.TimeUnit.SECONDS)
             assertEquals(1, requests.get())
             assertEquals(204, result.checks.single().httpCode)
+            if (application.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                assertTrue(
+                    application.getSystemService(android.app.NotificationManager::class.java)
+                        .activeNotifications.isEmpty()
+                )
+            }
             assertTrue(
                 requireNotNull(application.store.schedules.get(rule.definition.id)).next.atMillis >
                     Instant.now().toEpochMilli()
@@ -82,6 +91,7 @@ class WebsiteScheduleDeviceTest {
         } finally {
             application.schedules.cancelAll()
             application.store.clear()
+            application.schedules.cancelAll()
             application.schedules.updateReceiver()
             socket.close()
             executor.shutdownNow()

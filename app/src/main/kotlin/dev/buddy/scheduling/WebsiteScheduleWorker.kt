@@ -56,7 +56,10 @@ class WebsiteScheduleWorker(context: Context, parameters: WorkerParameters) : Co
             withContext(NonCancellable) {
                 withTimeoutOrNull(10_000) {
                     val next = repository.finish(rule, outcome, code, Instant.now(), ZoneId.systemDefault())
-                    if (next != null) application.schedules.enqueue(next)
+                    if (next != null) {
+                        application.schedules.enqueue(next)
+                        application.scheduleNotifications.completed(next, outcome, code)
+                    }
                 }
             }
         }

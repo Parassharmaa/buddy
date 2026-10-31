@@ -41,10 +41,12 @@ class ScheduleCoordinator(private val context: Context, private val repository: 
     }
     suspend fun cancel(id: String) {
         manager.cancelAllWorkByTag(tag(id)).await()
+        (context.applicationContext as dev.buddy.BuddyApplication).scheduleNotifications.remove(id)
         updateReceiver()
     }
     suspend fun cancelAll() {
         manager.cancelAllWorkByTag(TAG).await()
+        (context.applicationContext as dev.buddy.BuddyApplication).scheduleNotifications.clear()
     }
     suspend fun reconcile() {
         repository.list().forEach {

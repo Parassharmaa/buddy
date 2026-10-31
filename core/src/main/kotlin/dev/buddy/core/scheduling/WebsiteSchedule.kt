@@ -52,6 +52,7 @@ data class ScheduleDefinition(
     val zoneId: String,
     val followDeviceZone: Boolean = true,
     val localHttp: Boolean = false,
+    val notify: Boolean = false,
     val recurrence: ScheduleRecurrence = ScheduleRecurrence.DAILY,
     val missedPolicy: MissedCheckPolicy = MissedCheckPolicy.SKIP,
     val maximumRuntimeMillis: Long = 15_000

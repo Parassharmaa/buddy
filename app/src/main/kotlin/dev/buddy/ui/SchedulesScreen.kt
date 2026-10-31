@@ -1,5 +1,7 @@
 package dev.buddy.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,7 +24,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -145,9 +149,22 @@ private fun ScheduleEditor(initial: ScheduleDefinition?, dismiss: () -> Unit, sa
     var follow by remember { mutableStateOf(initial?.followDeviceZone ?: true) }
     var zone by remember { mutableStateOf(initial?.zoneId ?: ZoneId.systemDefault().id) }
     var local by remember { mutableStateOf(initial?.localHttp ?: false) }
+    var notify by remember { mutableStateOf(initial?.notify ?: false) }
+    val context = LocalContext.current
+    fun allowed() = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED &&
+        context.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()
+    var notificationAccess by remember { mutableStateOf(allowed()) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notificationAccess = granted && allowed()
+        notify = notificationAccess
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        notificationAccess = allowed()
+    }
     val definition = runCatching {
         val parsed = LocalTime.parse(time)
-        ScheduleDefinition(id, label.trim(), address.trim(), parsed.hour, parsed.minute, zone, follow, local)
+        ScheduleDefinition(id, label.trim(), address.trim(), parsed.hour, parsed.minute, zone, follow, local, notify)
     }.getOrNull()
     val preview = definition?.let { ScheduleTime.preview(it, Instant.now(), ZoneId.systemDefault()) }.orEmpty()
     Column(
@@ -159,19 +176,49 @@ private fun ScheduleEditor(initial: ScheduleDefinition?, dismiss: () -> Unit, sa
         OutlinedTextField(address, { address = it.take(4096) }, label = { Text("Website URL") }, singleLine = true)
         Text("Use a public address without a login, query string, or credentials.")
         OutlinedTextField(time, { time = it.take(5) }, label = { Text("Daily time (HH:mm)") }, singleLine = true)
-        Row {
-            Checkbox(follow, { follow = it })
+        Row(
+            Modifier.toggleable(follow, role = Role.Checkbox, onValueChange = { follow = it }),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(follow, onCheckedChange = null)
             Text("Follow device timezone")
         }
         OutlinedTextField(zone, {
             zone = it.take(80)
         }, label = { Text("Timezone ID") }, enabled = !follow, singleLine = true)
-        Row {
-            Checkbox(local, { local = it })
+        Row(
+            Modifier.toggleable(local, role = Role.Checkbox, onValueChange = { local = it }),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(local, onCheckedChange = null)
             Text("Allow HTTP for a local server")
         }
         if (local) LocalNetworkAccess("Checks on your Wi-Fi network require local network access.")
         Text("Approximate timing. Missed checks are skipped; daylight-saving gaps are skipped and overlaps run once.")
+        Row(
+            Modifier.toggleable(notify, role = Role.Checkbox, onValueChange = { checked ->
+                if (checked && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    notify = checked
+                }
+            }),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(notify, onCheckedChange = null)
+            Text("Notify when a check finishes")
+        }
+        if (!notificationAccess) {
+            Text("Notifications are off. Results still appear in Automations.")
+            TextButton(onClick = {
+                context.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                )
+            }) { Text("Notification settings") }
+        }
         preview.forEach { Text(formatOccurrence(it.atMillis, it.zoneId)) }
         if (definition == null) Text("Enter a name, valid URL, time, and timezone.")
         Row {
