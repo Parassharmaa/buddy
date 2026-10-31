@@ -7,6 +7,7 @@ android {
     namespace = "dev.buddy"
     compileSdk { version = release(37) { minorApiLevel = 2 } }
     buildToolsVersion = "37.0.0"
+    ndkVersion = "30.0.16248370"
     defaultConfig {
         minSdk = 33
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
