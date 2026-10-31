@@ -11,10 +11,10 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import androidx.core.net.toUri
 import dev.buddy.BuddyApplication
 import dev.buddy.EngineeringSessions
 import dev.buddy.R
@@ -182,7 +182,7 @@ class FixtureTaskService : Service() {
         val stop = PendingIntent.getService(
             this,
             0,
-            Intent(this, FixtureTaskService::class.java).setAction(STOP).setData(Uri.parse("buddy://fixture/$id")),
+            Intent(this, FixtureTaskService::class.java).setAction(STOP).setData("buddy://fixture/$id".toUri()),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val open = PendingIntent.getActivity(
@@ -216,7 +216,7 @@ class FixtureTaskService : Service() {
             val id = state.value.id ?: return
             activity.startService(
                 Intent(activity, FixtureTaskService::class.java).setAction(STOP)
-                    .setData(Uri.parse("buddy://fixture/$id"))
+                    .setData("buddy://fixture/$id".toUri())
             )
         }
         internal fun start(activity: Activity, port: Int): Boolean {
