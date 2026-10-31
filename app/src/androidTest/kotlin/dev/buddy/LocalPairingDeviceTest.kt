@@ -19,6 +19,7 @@ import dev.buddy.connection.BootstrapProvider
 import dev.buddy.core.LoopbackPort
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
+import java.util.regex.Pattern
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -73,6 +74,8 @@ class LocalPairingDeviceTest {
         var addressRowSeen = false
         var portOnlySeen = false
         var unavailableSeen = false
+        var portPageVisible = false
+        var portScrollAttempts = 0
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -212,10 +215,21 @@ class LocalPairingDeviceTest {
                 }
             }
             stage = "wireless_connection_port"
+            val portSummary = Pattern.compile(
+                ".*(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}.*|\\s*:\\s*[0-9]{1,5}\\s*"
+            )
             val connectPort = withTimeout(30_000) {
+                var searchUp = true
+                var attempt = 0
                 while (true) {
                     allowNetwork()
                     val controls = nodes()
+                    portPageVisible = controls.any {
+                        it.text?.toString()?.let { text ->
+                            text.contains("Use wireless debugging", ignoreCase = true) ||
+                                text.contains("Pair device with pairing code", ignoreCase = true)
+                        } == true
+                    }
                     addressRowSeen = addressRowSeen || controls.any {
                         it.text?.toString()?.contains("IP address", ignoreCase = true) == true
                     }
@@ -227,6 +241,20 @@ class LocalPairingDeviceTest {
                     }
                     controls.firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
                         ?.let { return@withTimeout it }
+                    // A system dialog may be focused while the Settings details window remains visible.
+                    val summaries = device.findObjects(
+                        By.pkg("com.android.settings").displayId(Display.DEFAULT_DISPLAY)
+                            .text(portSummary)
+                    )
+                    summaries.firstNotNullOfOrNull { it.text?.let(::portIn) }?.let { return@withTimeout it }
+                    if (portPageVisible && ++attempt % 5 == 0) {
+                        device.findObject(
+                            By.pkg("com.android.settings").scrollable(true).displayId(Display.DEFAULT_DISPLAY)
+                        )?.let {
+                            portScrollAttempts++
+                            if (!it.scroll(if (searchUp) Direction.UP else Direction.DOWN, 0.7f)) searchUp = !searchUp
+                        }
+                    }
                     delay(150)
                 }
                 error("Wireless connection details unavailable")
@@ -320,7 +348,8 @@ class LocalPairingDeviceTest {
                     "supported=$wifiSupported; launched=$settingsLaunched; developerTitle=$developerTitleSeen; " +
                     "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited; " +
                     "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled; " +
-                    "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen",
+                    "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen; " +
+                    "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts",
                 failure
             )
         } finally {
