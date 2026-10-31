@@ -21,6 +21,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
@@ -145,7 +146,13 @@ class WebSession(context: Context) : WebPort {
             null
         }
         _state.value =
-            _state.value.copy(status = WebStatus.LOADING, address = address.url, title = "", pendingOrigin = null)
+            _state.value.copy(
+                status = WebStatus.LOADING,
+                address = address.url,
+                title = "",
+                pendingOrigin = null,
+                interruption = null
+            )
         current.loadUrl(address.url)
     }
     fun allowPendingNavigation() {
@@ -214,8 +221,19 @@ class WebSession(context: Context) : WebPort {
         require(cookie == null || cookie.length <= 16384)
         return WebDownloadGrant(request.address, cookie)
     }
+    private fun needsHuman(reason: WebInterruption) {
+        cancelUpload()
+        cancelDownload()
+        _state.value = _state.value.copy(status = WebStatus.HUMAN_REQUIRED, interruption = reason, title = "")
+    }
     override suspend fun observe(expectedOrigin: String): WebReadResult = withContext(Dispatchers.Main.immediate) {
-        if (closed || !attached || _state.value.status != WebStatus.READY || !_state.value.canRead ||
+        val human = _state.value.interruption
+        if (_state.value.status == WebStatus.HUMAN_REQUIRED && human != WebInterruption.VERIFICATION) {
+            return@withContext WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED)
+        }
+        val readable = _state.value.status == WebStatus.READY ||
+            (_state.value.status == WebStatus.HUMAN_REQUIRED && human == WebInterruption.VERIFICATION)
+        if (closed || !attached || !readable || !_state.value.canRead ||
             expectedOrigin != approvedOrigin || expectedOrigin in excludedOrigins
         ) {
             return@withContext WebReadResult.Suppressed(WebReadStatus.UNSUPPORTED)
@@ -247,12 +265,20 @@ class WebSession(context: Context) : WebPort {
             require(encoded.length <= 128 * 1024)
             val data = json.parseToJsonElement(encoded).jsonObject
             when (data["status"]?.jsonPrimitive?.contentOrNull) {
+                "human" -> {
+                    needsHuman(WebInterruption.VERIFICATION)
+                    WebReadResult.Suppressed(WebReadStatus.HUMAN_REQUIRED)
+                }
+
                 "private" -> WebReadResult.Suppressed(WebReadStatus.PRIVATE)
 
                 "allowed" -> {
                     val title = data.getValue("title").jsonPrimitive.content
                     val text = data.getValue("text").jsonPrimitive.content
                     require(title.length <= 256 && text.length <= 32768)
+                    if (human == WebInterruption.VERIFICATION) {
+                        _state.value = _state.value.copy(status = WebStatus.READY, interruption = null)
+                    }
                     WebReadResult.Allowed(
                         WebSnapshot(
                             address.origin,
@@ -377,9 +403,17 @@ class WebSession(context: Context) : WebPort {
                 pageFailed = false
                 cancelUpload()
                 cancelDownload()
-                if (!closed) _state.value = _state.value.copy(status = WebStatus.LOADING, address = url)
+                if (!closed) {
+                    _state.value =
+                        _state.value.copy(status = WebStatus.LOADING, address = url, interruption = null)
+                }
             }
             override fun onPageFinished(view: WebView, url: String) {
+                if (closed || view !== this@WebSession.view || url != view.url ||
+                    (_state.value.status == WebStatus.LOADING && url != _state.value.address)
+                ) {
+                    return
+                }
                 if (!closed) {
                     _state.value =
                         _state.value.copy(
@@ -387,13 +421,15 @@ class WebSession(context: Context) : WebPort {
                                 null
                             ) {
                                 WebStatus.BLOCKED
+                            } else if (_state.value.interruption != null) {
+                                WebStatus.HUMAN_REQUIRED
                             } else if (pageFailed) {
                                 WebStatus.FAILED
                             } else {
                                 WebStatus.READY
                             },
                             address = url,
-                            title = view.title.orEmpty().take(256)
+                            title = if (_state.value.interruption == null) view.title.orEmpty().take(256) else ""
                         )
                 }
             }
@@ -417,6 +453,24 @@ class WebSession(context: Context) : WebPort {
                     pageFailed = true
                     _state.value = _state.value.copy(status = WebStatus.FAILED)
                 }
+            }
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                response: WebResourceResponse
+            ) {
+                if (closed || !request.isForMainFrame ||
+                    runCatching { WebAddress.parse(request.url.toString()).origin }.getOrNull() != approvedOrigin
+                ) {
+                    return
+                }
+                val reason = when (response.statusCode) {
+                    401 -> WebInterruption.SIGN_IN
+                    403 -> WebInterruption.ACCESS_DENIED
+                    429 -> WebInterruption.RATE_LIMIT
+                    else -> return
+                }
+                needsHuman(reason)
             }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 if (!closed) {

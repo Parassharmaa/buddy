@@ -3,10 +3,13 @@ package dev.buddy.browser
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class WebStatus { EMPTY, LOADING, READY, PAUSED, BLOCKED, FAILED, RENDERER_GONE }
+enum class WebStatus { EMPTY, LOADING, READY, PAUSED, BLOCKED, HUMAN_REQUIRED, FAILED, RENDERER_GONE }
 
 @Serializable
-enum class WebReadStatus { ALLOWED, PRIVATE, UNSUPPORTED, STALE }
+enum class WebReadStatus { ALLOWED, PRIVATE, HUMAN_REQUIRED, UNSUPPORTED, STALE }
+
+@Serializable
+enum class WebInterruption { SIGN_IN, ACCESS_DENIED, RATE_LIMIT, VERIFICATION }
 
 @Serializable
 data class WebSnapshot(
@@ -29,6 +32,7 @@ data class WebState(
     val address: String = "",
     val title: String = "",
     val pendingOrigin: String? = null,
+    val interruption: WebInterruption? = null,
     val canRead: Boolean = false,
     val canMute: Boolean = false,
     val soundAllowed: Boolean = false,
