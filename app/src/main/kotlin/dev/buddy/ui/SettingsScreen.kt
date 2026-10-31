@@ -172,7 +172,7 @@ import dev.buddy.storage.HistoryRetention
                 )
                 HistoryRetentionSettings(state.retention, state.loaded && !state.active, model::setHistoryRetention)
                 var confirm by remember { mutableStateOf(false) }
-                OutlinedButton(onClick = { confirm = true }) { Text("Delete all local data") }
+                OutlinedButton(onClick = { confirm = true }, enabled = state.loaded) { Text("Delete all local data") }
                 if (confirm) {
                     AlertDialog(onDismissRequest = {
                         confirm = false

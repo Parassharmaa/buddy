@@ -9,6 +9,7 @@ import dev.buddy.connection.PhoneConnection
 import dev.buddy.core.ChatMessage
 import dev.buddy.core.Conversation
 import dev.buddy.core.ModelConfig
+import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.storage.EncryptedStore
 import dev.buddy.storage.HistoryRetention
@@ -19,12 +20,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -140,6 +143,71 @@ class ChatRecoveryDeviceTest {
             }
         }
     }
+
+    @Test fun deletingRecoveredHistoryCannotRestoreOldRowsAndKeepsObservationAlive() = runBlocking {
+        requireDisposableEmulator()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val models = ViewModelStore()
+        EncryptedStore(context).use { store ->
+            store.clear()
+            try {
+                val previous = (0 until 60).map { index ->
+                    val id = UUID.randomUUID().toString()
+                    Conversation(
+                        id,
+                        "Recovery fixture $index",
+                        listOf(ChatMessage("user", "Synthetic recovery history")),
+                        listOf(
+                            RunRecord(
+                                UUID.randomUUID().toString(),
+                                id,
+                                "Synthetic run",
+                                RunState.RUNNING,
+                                "Running",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                }
+                previous.forEach { store.put("conversation:${it.id}", "conversation", Json.encodeToString(it)) }
+                val oldIds = previous.map { it.id }.toSet()
+                val model = withContext(Dispatchers.Main) {
+                    BuddyViewModel(store, PhoneConnection(context)).also { models.put("chat", it) }
+                }
+                val loaded = withTimeout(10_000) { model.state.first { it.loaded && it.history.size == previous.size } }
+                withContext(Dispatchers.Main) { model.deleteAll() }
+                withTimeout(10_000) {
+                    model.state.first {
+                        it.loaded && it.conversation.id != loaded.conversation.id &&
+                            it.history.isEmpty()
+                    }
+                }
+                val resurrected = withTimeoutOrNull(1_000) {
+                    model.state.first { state -> state.history.any { it.id in oldIds } }
+                }
+                assertNull(resurrected)
+                assertTrue(store.observe("conversation").first().isEmpty())
+                assertNull(store.get("model-config"))
+                val fresh =
+                    Conversation(
+                        UUID.randomUUID().toString(),
+                        "Fresh fixture",
+                        listOf(ChatMessage("user", "New history"))
+                    )
+                store.put("conversation:${fresh.id}", "conversation", Json.encodeToString(fresh))
+                withTimeout(5_000) {
+                    model.state.first { state ->
+                        state.history.any { it.id == fresh.id } &&
+                            state.history.none { it.id in oldIds }
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) { models.clear() }
+                store.clear()
+            }
+        }
+    }
+
     private fun requireDisposableEmulator() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))

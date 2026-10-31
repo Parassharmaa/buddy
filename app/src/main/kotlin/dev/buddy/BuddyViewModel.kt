@@ -51,12 +51,16 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     private var config: ModelConfig? = null
     private var modelJob: Job? = null
     private var modelTestJob: Job? = null
+    private var loadingJob: Job? = null
     private var epoch = 0
     private val persistence = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
-        viewModelScope.launch {
+        loadRecords()
+    }
+    private fun loadRecords() {
+        loadingJob = viewModelScope.launch {
             try {
                 val saved = store.get("model-config")?.let { json.decodeFromString<ModelConfig>(it) }
                 config = saved
@@ -94,6 +98,11 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                     }
                     val persistRecovery = firstLoad
                     firstLoad = false
+                    if (persistRecovery) {
+                        recovered.zip(conversations).filter { it.first != it.second }.forEach { (fixed, _) ->
+                            store.put("conversation:${fixed.id}", "conversation", json.encodeToString(fixed))
+                        }
+                    }
                     _state.update { current ->
                         val removed = !current.active &&
                             current.history.any { it.id == current.conversation.id } &&
@@ -104,12 +113,9 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                             conversation = if (removed) newConversation() else current.conversation
                         )
                     }
-                    if (persistRecovery) {
-                        recovered.zip(conversations).filter { it.first != it.second }.forEach { (fixed, _) ->
-                            store.put("conversation:${fixed.id}", "conversation", json.encodeToString(fixed))
-                        }
-                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 _state.update {
                     it.copy(loaded = true, error = "Local records could not be opened. No private data was sent.")
@@ -307,8 +313,12 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
     }
 
     fun stop() {
+        stopModel(persistRecord = true)
+    }
+    private fun stopModel(persistRecord: Boolean): Job? {
         epoch++
-        modelJob?.cancel()
+        val pending = modelJob
+        pending?.cancel()
         modelJob = null
         _state.update { current ->
             current.copy(
@@ -327,17 +337,21 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                 )
             )
         }
-        val stopped = _state.value.conversation
-        viewModelScope.launch {
-            try {
-                persist(stopped)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                _state.update { it.copy(error = "Stopped, but the local run record could not be saved.") }
+        if (persistRecord) {
+            val stopped = _state.value.conversation
+            viewModelScope.launch {
+                try {
+                    persist(stopped)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _state.update { it.copy(error = "Stopped, but the local run record could not be saved.") }
+                }
             }
         }
+        return pending
     }
+
     fun newChat() {
         if (_state.value.active) return
         _state.update { it.copy(conversation = newConversation(), draft = "", error = null) }
@@ -361,20 +375,25 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
         }
     }
     fun deleteAll() {
-        stop()
+        if (!_state.value.loaded) return
+        val pendingModel = stopModel(persistRecord = false)
+        val pendingLoad = loadingJob
+        loadingJob = null
+        pendingLoad?.cancel()
         val pendingTest = modelTestJob
         modelTestJob = null
         pendingTest?.cancel()
         config = null
-        _state.update { it.copy(loaded = false, configured = false) }
+        _state.update { it.copy(loaded = false, configured = false, active = false, testingModel = false) }
         viewModelScope.launch {
+            pendingModel?.join()
+            pendingLoad?.join()
             pendingTest?.join()
             val identityRemoved = phone.disconnect(true)
             try {
                 persistence.withLock { store.clear() }
                 config = null
                 _state.value = BuddyState(
-                    loaded = true,
                     error = if (identityRemoved) {
                         null
                     } else {
@@ -382,9 +401,12 @@ class BuddyViewModel(private val store: EncryptedStore, val phone: PhoneConnecti
                             "Try Forget again in Phone connection."
                     }
                 )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
-                _state.update { it.copy(loaded = true, error = "Local data could not be cleared. Try again.") }
+                _state.update { it.copy(loaded = false, error = "Local data could not be cleared. Try again.") }
             }
+            loadRecords()
         }
     }
     fun pair(port: String, code: String) {
