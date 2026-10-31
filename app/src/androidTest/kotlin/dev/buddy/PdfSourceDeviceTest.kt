@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,6 +60,11 @@ class PdfSourceDeviceTest {
             store.clear()
             try {
                 val workspace = UUID.randomUUID().toString()
+                store.put(
+                    "conversation:$workspace",
+                    "conversation",
+                    Json.encodeToString(Conversation(workspace, "PDF fixture"))
+                )
                 val bytes = document()
                 val artifact = try {
                     store.artifacts.importFile(
@@ -122,6 +129,11 @@ class PdfSourceDeviceTest {
             store.clear()
             try {
                 val workspace = UUID.randomUUID().toString()
+                store.put(
+                    "conversation:$workspace",
+                    "conversation",
+                    Json.encodeToString(Conversation(workspace, "PDF fixture"))
+                )
                 val bad = store.artifacts.importFile(
                     workspace,
                     "bad.pdf",
