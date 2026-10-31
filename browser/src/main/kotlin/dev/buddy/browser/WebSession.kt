@@ -65,6 +65,7 @@ class WebSession(context: Context) : WebPort {
     private var uploadGeneration = -1L
     private var uploadTypes = emptyList<String>()
     private var multipleUploads = false
+    private var downloadGeneration = -1L
     val isClosed: Boolean get() = closed
     val hasWindow: Boolean get() = attached && view?.isAttachedToWindow == true
     private var excludedOrigins = emptySet<String>()
@@ -103,6 +104,7 @@ class WebSession(context: Context) : WebPort {
         userVisible = false
         beforePause = _state.value.status
         cancelUpload()
+        cancelDownload()
         view?.let {
             it.clearFocus()
             mute(it, true)
@@ -133,6 +135,7 @@ class WebSession(context: Context) : WebPort {
         generation++
         setSoundAllowed(false)
         cancelUpload()
+        cancelDownload()
         approvedOrigin = address.origin
         pendingAddress = null
         script?.remove()
@@ -191,6 +194,25 @@ class WebSession(context: Context) : WebPort {
         upload = null
         uploadTypes = emptyList()
         _state.value = _state.value.copy(hasUploadRequest = false)
+    }
+    fun cancelDownload() {
+        mainThread()
+        _state.value = _state.value.copy(download = null)
+    }
+    fun approveDownload(id: String): WebDownloadGrant? {
+        mainThread()
+        val request = _state.value.download ?: return null
+        if (request.id != id || closed || !hasWindow || !userVisible || downloadGeneration != generation ||
+            request.address.origin != approvedOrigin ||
+            view?.url?.let { runCatching { WebAddress.parse(it).origin }.getOrNull() } != approvedOrigin
+        ) {
+            cancelDownload()
+            return null
+        }
+        cancelDownload()
+        val cookie = CookieManager.getInstance().getCookie(request.address.url)
+        require(cookie == null || cookie.length <= 16384)
+        return WebDownloadGrant(request.address, cookie)
     }
     override suspend fun observe(expectedOrigin: String): WebReadResult = withContext(Dispatchers.Main.immediate) {
         if (closed || !attached || _state.value.status != WebStatus.READY || !_state.value.canRead ||
@@ -304,7 +326,23 @@ class WebSession(context: Context) : WebPort {
         val canObserve = canMute && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         _state.value = _state.value.copy(canMute = canMute, canRead = canObserve)
         mute(this, true)
-        setDownloadListener { _, _, _, _, _ -> _state.value = _state.value.copy(status = WebStatus.BLOCKED) }
+        setDownloadListener { url, _, disposition, mime, length ->
+            val address = runCatching { WebAddress.parse(url) }.getOrNull()
+            if (!closed && userVisible && hasWindow && address != null && address.origin == approvedOrigin &&
+                address.origin !in excludedOrigins && _state.value.download == null
+            ) {
+                downloadGeneration = generation
+                _state.value = _state.value.copy(
+                    download = WebDownloadRequest(
+                        UUID.randomUUID().toString(),
+                        address,
+                        disposition.orEmpty().take(256),
+                        mime.orEmpty().take(128),
+                        length
+                    )
+                )
+            }
+        }
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val address = runCatching { WebAddress.parse(request.url.toString()) }.getOrNull()
@@ -331,6 +369,7 @@ class WebSession(context: Context) : WebPort {
                 generation++
                 pageFailed = false
                 cancelUpload()
+                cancelDownload()
                 if (!closed) _state.value = _state.value.copy(status = WebStatus.LOADING, address = url)
             }
             override fun onPageFinished(view: WebView, url: String) {

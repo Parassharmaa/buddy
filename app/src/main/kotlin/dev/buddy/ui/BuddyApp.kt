@@ -119,7 +119,15 @@ private enum class Destination(val label: String) {
                             SourcePanel(state, model.sources)
                         }
 
-                        Destination.BROWSER -> BrowserScreen(model.browser, state.artifacts, model.sources::page)
+                        Destination.BROWSER -> BrowserScreen(
+                            model.browser,
+                            state.artifacts,
+                            model.sources::page,
+                            model::downloadFile,
+                            state.importing || state.exporting,
+                            state.active,
+                            model::cancelFileOperation
+                        )
 
                         Destination.ACTIVITY -> Activity(state.history, {
                             model.openConversation(it)

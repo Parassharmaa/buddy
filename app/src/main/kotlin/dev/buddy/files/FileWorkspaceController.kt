@@ -1,7 +1,9 @@
 package dev.buddy.files
 
 import android.net.Uri
+import androidx.core.net.toUri
 import dev.buddy.BuddyState
+import dev.buddy.browser.DownloadedFile
 import dev.buddy.core.Conversation
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.EncryptedStore
@@ -54,12 +56,21 @@ internal class FileWorkspaceController(
 
     fun importDocument(uri: Uri) {
         val reader = documents ?: return
-        if (!mayStart()) return
+        importSelected { uri to reader.read(uri) }
+    }
+
+    fun importDownload(read: suspend () -> DownloadedFile): Boolean = importSelected {
+        val file = read()
+        file.origin.toUri() to SelectedDocument(file.name, file.mimeType, file.bytes)
+    }
+
+    private fun importSelected(read: suspend () -> Pair<Uri, SelectedDocument>): Boolean {
+        if (!mayStart()) return false
         val conversation = _state.value.conversation
         _state.update { it.copy(importing = true, error = null) }
         fileJob = scope.launch {
             try {
-                val selected = reader.read(uri)
+                val (uri, selected) = read()
                 try {
                     val saved = conversation.copy(
                         title = if (conversation.messages.isEmpty()) "Files" else conversation.title
@@ -95,6 +106,7 @@ internal class FileWorkspaceController(
                 _state.update { it.copy(importing = false) }
             }
         }
+        return true
     }
 
     fun removeArtifact(id: String) {

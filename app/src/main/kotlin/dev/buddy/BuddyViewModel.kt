@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.buddy.adb.AdbServiceKind
+import dev.buddy.browser.BrowserDownloader
 import dev.buddy.connection.PhoneConnection
 import dev.buddy.core.ChatMessage
 import dev.buddy.core.ChatSource
@@ -65,6 +66,7 @@ class BuddyViewModel(
     browserContext: Context? = null
 ) : ViewModel() {
     private val client = ModelClient()
+    private val downloader = BrowserDownloader()
     private val _state = MutableStateFlow(BuddyState())
     val state = _state.asStateFlow()
     private var config: ModelConfig? = null
@@ -464,6 +466,13 @@ class BuddyViewModel(
         }
     }
     fun importDocument(uri: Uri) = files.importDocument(uri)
+    fun downloadFile(id: String) {
+        val admitted = files.importDownload {
+            val grant = browser.approveDownload(id) ?: error("Download approval expired")
+            downloader.fetch(grant)
+        }
+        if (!admitted) files.fileError("Files are busy. Finish or cancel the current file operation first.")
+    }
     fun cancelFileOperation() {
         files.cancel()
     }
@@ -501,6 +510,7 @@ class BuddyViewModel(
     override fun onCleared() {
         sources.cancel(clearDraft = true)
         browser.close()
+        downloader.close()
         client.close()
     }
     private suspend fun persist(conversation: Conversation = _state.value.conversation) = persistence.withLock {

@@ -32,7 +32,8 @@ data class WebState(
     val canRead: Boolean = false,
     val canMute: Boolean = false,
     val soundAllowed: Boolean = false,
-    val hasUploadRequest: Boolean = false
+    val hasUploadRequest: Boolean = false,
+    val download: WebDownloadRequest? = null
 ) {
     override fun toString(): String = "WebState(status=$status)"
 }

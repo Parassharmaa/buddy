@@ -105,9 +105,19 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
                 it.isISOControl() || it == '/' || it == '\\' || it in '\u202a'..'\u202e' || it in '\u2066'..'\u2069'
             }
         )
-        val extensions = types[artifact.mimeType] ?: error("Unsupported file type")
+        val extensions =
+            dev.buddy.core.WorkspaceFileTypes.extensions(artifact.mimeType) ?: error("Unsupported file type")
         require(artifact.displayName.substringAfterLast('.', "").lowercase() in extensions)
-        require(artifact.sourceUri.length in 1..2048 && Uri.parse(artifact.sourceUri).scheme == "content")
+        require(artifact.sourceUri.length in 1..2048)
+        if (Uri.parse(artifact.sourceUri).scheme != "content") {
+            val provenance = java.net.URI(artifact.sourceUri)
+            require(
+                provenance.scheme in setOf("https", "http") && !provenance.host.isNullOrBlank() &&
+                    provenance.userInfo == null && provenance.query == null && provenance.fragment == null &&
+                    provenance.path.orEmpty() in setOf("", "/") &&
+                    (provenance.port == -1 || provenance.port in 1..65535)
+            )
+        }
     }
     private suspend fun listed(workspace: String): List<WorkspaceArtifact> =
         records.list("artifact", prefix(workspace)).map {
@@ -277,23 +287,11 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
     }
 
     companion object {
-        const val MAX_FILE_BYTES = 8 * 1024 * 1024
+        const val MAX_FILE_BYTES = dev.buddy.core.WorkspaceFileTypes.MAX_FILE_BYTES
         const val MAX_WORKSPACE_BYTES = 32L * 1024 * 1024
         private const val MAX_FILES = 16
         private val operations = Mutex()
         private val keyLock = Any()
-        private val types = mapOf(
-            "text/plain" to setOf("txt"),
-            "text/markdown" to setOf("md", "markdown"),
-            "application/json" to setOf("json"),
-            "application/pdf" to setOf("pdf"),
-            "image/png" to setOf("png"),
-            "image/jpeg" to setOf("jpg", "jpeg"),
-            "image/webp" to setOf("webp"),
-            "image/avif" to setOf("avif"),
-            "image/heic" to setOf("heic", "heif"),
-            "image/heif" to setOf("heic", "heif")
-        )
         private fun validateContents(mimeType: String, bytes: ByteArray) {
             fun starts(vararg expected: Int) = bytes.size >= expected.size && expected.indices.all {
                 bytes[it].toInt() and 255 == expected[it]

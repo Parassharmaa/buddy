@@ -191,6 +191,10 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     fun cancelUpload() {
         session?.cancelUpload()
     }
+    fun cancelDownload() {
+        session?.cancelDownload()
+    }
+    fun approveDownload(id: String) = session?.approveDownload(id)
     fun chooseFiles(uris: List<Uri>) {
         session?.chooseFiles(uris)
     }
