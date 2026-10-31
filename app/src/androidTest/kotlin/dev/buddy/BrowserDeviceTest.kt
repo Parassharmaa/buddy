@@ -127,6 +127,7 @@ class BrowserDeviceTest {
                 assertFalse(snapshot.sourceLabel.contains('?'))
             }
             assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), read(activity, pages, "/private"))
+            assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), read(activity, pages, "/login"))
             assertEquals(WebReadResult.Suppressed(WebReadStatus.UNSUPPORTED), read(activity, pages, "/frame"))
         }
     }
@@ -204,6 +205,29 @@ class BrowserDeviceTest {
             assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
             delay(250)
             assertEquals(WebStatus.RENDERER_GONE, activity.session.state.value.status)
+        }
+    }
+
+    @Test(timeout = 45_000)
+    fun pageNavigationToAnotherOriginWaitsForExplicitUserConfirmation() = runBlocking {
+        withBrowser { activity, pages ->
+            assertTrue(read(activity, pages, "/public") is WebReadResult.Allowed)
+            Pages().use { other ->
+                withContext(Dispatchers.Main) {
+                    val content = activity.findViewById<android.view.View>(
+                        android.R.id.content
+                    ) as android.view.ViewGroup
+                    val view = content.getChildAt(0) as android.webkit.WebView
+                    // Both origins are generated loopback fixtures, never interpolated website input.
+                    view.evaluateJavascript("location.href='${other.origin}/public'", null)
+                }
+                withTimeout(5_000) { activity.session.state.first { it.pendingOrigin == other.origin } }
+                assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
+                withContext(Dispatchers.Main) { activity.session.allowPendingNavigation() }
+                withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
+                assertTrue(activity.session.observe(other.origin) is WebReadResult.Allowed)
+                assertTrue(activity.session.observe(pages.origin) is WebReadResult.Suppressed)
+            }
         }
     }
 }
