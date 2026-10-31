@@ -5,8 +5,13 @@ import android.net.Uri
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import dev.buddy.storage.WorkspaceArtifacts
 import java.io.ByteArrayOutputStream
+import java.io.FileDescriptor
 import java.io.IOException
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Future
@@ -46,17 +51,15 @@ class DocumentAccess(context: Context) {
         val opened = requireNotNull(resolver.openFileDescriptor(uri, "r", signal))
         descriptor.set(opened)
         signal.throwIfCanceled()
+        nonblocking(opened.fileDescriptor)
         val buffer = ByteArray(16 * 1024)
         val contents = WipingBuffer()
         try {
-            ParcelFileDescriptor.AutoCloseInputStream(opened).use { input ->
-                while (true) {
-                    signal.throwIfCanceled()
-                    val count = input.read(buffer)
-                    if (count == -1) break
-                    require(count <= WorkspaceArtifacts.MAX_FILE_BYTES - contents.size())
-                    contents.write(buffer, 0, count)
-                }
+            while (true) {
+                val count = transfer(opened.fileDescriptor, signal, buffer, 0, buffer.size, writing = false)
+                if (count == 0) break
+                require(count <= WorkspaceArtifacts.MAX_FILE_BYTES - contents.size())
+                contents.write(buffer, 0, count)
             }
             SelectedDocument(displayName, mimeType, contents.toByteArray())
         } finally {
@@ -73,15 +76,11 @@ class DocumentAccess(context: Context) {
                 val opened = requireNotNull(resolver.openFileDescriptor(uri, "wt", signal))
                 descriptor.set(opened)
                 signal.throwIfCanceled()
-                ParcelFileDescriptor.AutoCloseOutputStream(opened).use { output ->
-                    var offset = 0
-                    while (offset < contents.size) {
-                        signal.throwIfCanceled()
-                        val count = minOf(16 * 1024, contents.size - offset)
-                        output.write(contents, offset, count)
-                        offset += count
-                    }
-                    output.flush()
+                nonblocking(opened.fileDescriptor)
+                var offset = 0
+                while (offset < contents.size) {
+                    val count = minOf(16 * 1024, contents.size - offset)
+                    offset += transfer(opened.fileDescriptor, signal, contents, offset, count, writing = true)
                 }
             } finally {
                 contents.fill(0)
@@ -99,7 +98,7 @@ class DocumentAccess(context: Context) {
             val descriptor = AtomicReference<ParcelFileDescriptor?>()
             val task = AtomicReference<Future<*>?>()
             continuation.invokeOnCancellation {
-                signal.cancel()
+                runCatching { signal.cancel() }
                 runCatching { descriptor.getAndSet(null)?.close() }
                 task.get()?.cancel(true)
                 executor.purge()
@@ -127,6 +126,38 @@ class DocumentAccess(context: Context) {
                 if (!continuation.isActive) task.get()?.cancel(true)
             } catch (_: Exception) {
                 if (continuation.isActive) continuation.resumeWithException(IOException("Document access unavailable"))
+            }
+        }
+    }
+
+    private fun nonblocking(descriptor: FileDescriptor) {
+        val flags = Os.fcntlInt(descriptor, OsConstants.F_GETFL, 0)
+        Os.fcntlInt(descriptor, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+    }
+
+    private fun transfer(
+        descriptor: FileDescriptor,
+        signal: CancellationSignal,
+        bytes: ByteArray,
+        offset: Int,
+        count: Int,
+        writing: Boolean
+    ): Int {
+        val poll = StructPollfd().apply {
+            fd = descriptor
+            events = (if (writing) OsConstants.POLLOUT else OsConstants.POLLIN).toShort()
+        }
+        while (true) {
+            signal.throwIfCanceled()
+            try {
+                if (Os.poll(arrayOf(poll), 250) == 0) continue
+                return if (writing) {
+                    Os.write(descriptor, bytes, offset, count)
+                } else {
+                    Os.read(descriptor, bytes, offset, count)
+                }
+            } catch (failure: ErrnoException) {
+                if (failure.errno != OsConstants.EAGAIN && failure.errno != OsConstants.EINTR) throw failure
             }
         }
     }

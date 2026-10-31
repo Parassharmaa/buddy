@@ -37,6 +37,7 @@ class FileWorkspaceDeviceTest {
         val models = ViewModelStore()
         store.clear()
         DocumentFixtureProvider.release()
+        var nextSource: Uri? = null
         try {
             val model = withContext(Dispatchers.Main) {
                 BuddyViewModel(store, PhoneConnection(context), DocumentAccess(context)).also {
@@ -54,14 +55,29 @@ class FileWorkspaceDeviceTest {
             withContext(Dispatchers.Main) { model.newChat() }
             val current = model.state.value.conversation.id
             assertTrue(current != original)
+            val selected = requireNotNull(
+                context.contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, "buddy-after-cancellation.txt")
+                        put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                )
+            )
+            nextSource = selected
+            DocumentAccess(context).write(selected, "New synthetic document".toByteArray())
+            withContext(Dispatchers.Main) { model.importDocument(selected) }
+            withTimeout(5_000) { model.state.first { !it.importing && it.artifacts.size == 1 } }
             DocumentFixtureProvider.release()
             store.expireHistory()
             assertEquals(current, model.state.value.conversation.id)
-            assertTrue(model.state.value.artifacts.isEmpty())
+            assertTrue(model.state.value.artifacts.single().workspace == current)
             assertTrue(store.artifacts.list(original).isEmpty())
             assertEquals(null, store.get("conversation:$original"))
         } finally {
             DocumentFixtureProvider.release()
+            nextSource?.let { context.contentResolver.delete(it, null, null) }
             withContext(Dispatchers.Main) { models.clear() }
             store.clear()
         }
@@ -106,6 +122,12 @@ class FileWorkspaceDeviceTest {
             assertEquals(bytes.size, artifact.bytes)
             assertArrayEquals(bytes, store.artifacts.read(artifact.workspace, artifact.id, ArtifactReadBudget()))
             assertTrue(imported.conversation.messages.isEmpty())
+            withTimeout(5_000) { model.state.first { state -> state.history.any { it.id == artifact.workspace } } }
+            withContext(Dispatchers.Main) {
+                model.newChat()
+                model.openConversation(artifact.workspace)
+            }
+            withTimeout(5_000) { model.state.first { it.artifacts.any { file -> file.id == artifact.id } } }
             val shared = Uri.Builder().scheme("content").authority(context.packageName + ".artifacts")
                 .appendPath(artifact.workspace).appendPath(artifact.id).build()
             assertEquals("text/plain", resolver.getType(shared))

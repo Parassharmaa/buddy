@@ -212,6 +212,11 @@ class WorkspaceArtifacts(context: Context, private val records: EncryptedStore) 
             val destination = file(workspace, id)
             records.remove(prefix(workspace) + id)
             AtomicFile(destination).delete()
+            check(
+                listOf(destination, File(destination.path + ".new"), File(destination.path + ".bak")).none {
+                    Files.exists(it.toPath(), LinkOption.NOFOLLOW_LINKS)
+                }
+            ) { "File cleanup incomplete" }
         }
     }
 
