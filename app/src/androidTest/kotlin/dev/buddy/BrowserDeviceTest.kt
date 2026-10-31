@@ -210,7 +210,14 @@ class BrowserDeviceTest {
                 assertFalse(activity.session.state.value.hasUploadRequest)
                 assertEquals(null, activity.session.state.value.download)
             }
-            withContext(Dispatchers.Main) { activity.session.navigate(WebAddress.parse(pages.origin + "/captcha")) }
+            withContext(Dispatchers.Main) {
+                activity.session.navigate(WebAddress.parse(pages.origin + "/captcha"))
+                val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
+                val view = root.getChildAt(0) as android.webkit.WebView
+                // A previous document can finish after loadUrl and before the new document starts.
+                view.webViewClient.onPageFinished(view, view.url.orEmpty())
+                assertEquals(WebStatus.LOADING, activity.session.state.value.status)
+            }
             withTimeout(10_000) { activity.session.state.first { it.status == WebStatus.READY } }
             val challenge = activity.session.observe(pages.origin)
             assertEquals(
