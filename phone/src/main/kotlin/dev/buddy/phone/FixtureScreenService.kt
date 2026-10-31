@@ -44,7 +44,16 @@ internal data class FixtureWindowPrivacy(
     val monitorProbe: String
 )
 
-internal data class FixtureSnapshot(val observation: Observation, val nodes: Map<String, AccessibilityNodeInfo>)
+internal data class FixtureSnapshot(
+    val observation: Observation,
+    val nodes: Map<String, AccessibilityNodeInfo>,
+    val metadataPending: Boolean = false
+) {
+    init {
+        require(!metadataPending || (observation.nodes.isEmpty() && observation.excludedOverlay &&
+            !observation.protected && !observation.credentialSurface))
+    }
+}
 
 internal fun fixtureFingerprint(nodes: List<UiElement>): String = sha256(
     nodes.joinToString("") { element ->
@@ -106,7 +115,8 @@ class FixtureScreenService : AccessibilityService() {
                     FIXTURE_PACKAGE, scope.width, scope.height, emptyList(), fixtureFingerprint(emptyList()),
                     protected = privacy.secure, excludedOverlay = !privacy.known || privacy.mixed
                 ),
-                emptyMap()
+                emptyMap(),
+                metadataPending = !privacy.known && !privacy.secure && !privacy.mixed
             )
         }
         val windows = windowsOnAllDisplays.get(scope.displayId).orEmpty()
@@ -172,13 +182,16 @@ class FixtureScreenService : AccessibilityService() {
             FIXTURE_PACKAGE, scope.width, scope.height, safeElements, fingerprint,
             credentialSurface = privateInput, excludedOverlay = excluded
         )
+        lastWindowSummary += "; private=$privateInput; excluded=$excluded; nodes=${safeElements.size}"
         val filtered = ObservationPrivacyGate(emptySet()).filter(observation)
         return when (filtered) {
             is FilteredObservation.Allowed -> FixtureSnapshot(filtered.observation, references)
 
             is FilteredObservation.Suppressed -> FixtureSnapshot(
                 observation.copy(nodes = emptyList(), excludedOverlay = excluded || !privateInput),
-                emptyMap()
+                emptyMap(),
+                metadataPending = !privateInput && (windows.isEmpty() ||
+                    (windows.size == 1 && windows.single().root == null))
             )
         }
     }

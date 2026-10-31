@@ -283,12 +283,19 @@ class FixtureWorkspace private constructor(
                     val until = SystemClock.elapsedRealtime() + 2_000
                     var evidence = emptyList<String>()
                     while (SystemClock.elapsedRealtime() < until) {
-                        val after = try {
-                            observe()
+                        val captured = try {
+                            snapshot()
                         } catch (_: FixtureScreenChanged) {
                             delay(50)
                             continue
                         }
+                        // Wait only for metadata: each attempt still suppresses all text while unavailable.
+                        // This never re-dispatches the action or extends the verification deadline.
+                        if (captured.metadataPending) {
+                            delay(50)
+                            continue
+                        }
+                        val after = captured.observation
                         val verified = when (prepared.kind) {
                             FixtureActionKind.DRAFT -> after.nodes.any {
                                 it.editable &&

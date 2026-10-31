@@ -2,6 +2,7 @@ package dev.buddy
 
 import android.app.UiAutomation
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,6 +16,8 @@ import dev.buddy.core.Observation
 import dev.buddy.phone.FixtureScreenService
 import dev.buddy.phone.FixtureWorkspace
 import dev.buddy.storage.EncryptedStore
+import dev.buddy.shell.IBuddyHelper
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -68,9 +71,30 @@ class FixtureWorkspaceDeviceTest {
                         store.clear()
                         stage = "open_workspace"
                         val runId = UUID.randomUUID().toString()
+                        var verificationRequest: String? = null
+                        val verificationTaps = AtomicInteger()
+                        val missingMetadata = AtomicInteger()
+                        val observedHelper = object : IBuddyHelper by bootstrap.helper {
+                            override fun tap(lease: String, token: String, requestId: String, x: Int, y: Int) {
+                                bootstrap.helper.tap(lease, token, requestId, x, y)
+                                if (requestId == verificationRequest) {
+                                    verificationTaps.incrementAndGet()
+                                    missingMetadata.set(1)
+                                }
+                            }
+                            override fun displayState(lease: String, token: String): Bundle {
+                                val current = bootstrap.helper.displayState(lease, token)
+                                return if (missingMetadata.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) {
+                                    Bundle(current).apply {
+                                        putBoolean("windowMetadataKnown", false)
+                                        putInt("windowMetadataStatus", 6)
+                                    }
+                                } else current
+                            }
+                        }
                         val workspace = FixtureWorkspace.open(
                             context,
-                            bootstrap.helper,
+                            observedHelper,
                             ActionExecutor(store, SystemClock::elapsedRealtime),
                             frames.surface,
                             runId,
@@ -143,6 +167,7 @@ class FixtureWorkspaceDeviceTest {
                                 SystemClock.elapsedRealtime() + 5_000,
                                 accepted = true
                             )
+                            verificationRequest = action.id
                             stage = "approve_fixture_send"
                             val sendResult = workspace.execute(send, approval, gate = { gate() })
                             if (sendResult !is ExecutionResult.Verified) {
@@ -153,9 +178,11 @@ class FixtureWorkspaceDeviceTest {
                                     SystemClock.elapsedRealtime()
                                 throw AssertionError(
                                     "Send execution: $sendResult; failure=${saved?.failure}; " +
-                                        "elapsedMs=${saved?.elapsedMillis}; authRemainingMs=$remaining"
+                                        "elapsedMs=${saved?.elapsedMillis}; authRemainingMs=$remaining; " +
+                                        FixtureScreenService.lastWindowSummary
                                 )
                             }
+                            assertEquals(1, verificationTaps.get())
                             sendResult.evidenceIds.forEach { id ->
                                 assertNotNull(store.get("evidence:$id"))
                             }
