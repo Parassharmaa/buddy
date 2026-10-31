@@ -201,6 +201,7 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
             putInt("windowMetadataCount", privacy.windowCount)
             putInt("windowMetadataScopedCount", privacy.scopedCount)
             putIntArray("windowMetadataDisplays", privacy.displays.toIntArray())
+            putIntArray("windowMetadataForeign", privacy.foreignWindows.toIntArray())
             putBoolean("windowMetadataKnown", privacy.known)
             putBoolean("secureWindow", privacy.secure)
             putBoolean("mixedWindowOwners", privacy.mixed)

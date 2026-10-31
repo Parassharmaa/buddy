@@ -38,7 +38,8 @@ internal data class FixtureWindowPrivacy(
     val status: Int,
     val windowCount: Int,
     val scopedCount: Int,
-    val displays: List<Int>
+    val displays: List<Int>,
+    val foreignWindows: List<Int>
 )
 
 internal data class FixtureSnapshot(val observation: Observation, val nodes: Map<String, AccessibilityNodeInfo>)
@@ -95,7 +96,7 @@ class FixtureScreenService : AccessibilityService() {
             lastWindowSummary =
                 "metadata suppressed; status=${privacy.status}; known=${privacy.known}; " +
                 "secure=${privacy.secure}; mixed=${privacy.mixed}; windows=${privacy.windowCount}; " +
-                "scoped=${privacy.scopedCount}; displays=${privacy.displays}"
+                "scoped=${privacy.scopedCount}; displays=${privacy.displays}; foreign=${privacy.foreignWindows}"
             return FixtureSnapshot(
                 Observation(
                     UUID.randomUUID().toString(), scope.runId, startRevision, SystemClock.elapsedRealtime(),

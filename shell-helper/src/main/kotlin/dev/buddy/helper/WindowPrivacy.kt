@@ -17,7 +17,8 @@ internal object WindowPrivacy {
         val mixed: Boolean = false,
         val windowCount: Int = 0,
         val scopedCount: Int = 0,
-        val displays: List<Int> = emptyList()
+        val displays: List<Int> = emptyList(),
+        val foreignWindows: List<Int> = emptyList()
     ) {
         val known: Boolean get() = status == Status.AVAILABLE
     }
@@ -33,7 +34,10 @@ internal object WindowPrivacy {
             mixed = scoped.any { it.ownerUid != fixtureUid },
             windowCount = windows.size,
             scopedCount = scoped.size,
-            displays = windows.map { it.displayId }.distinct().sorted().take(16)
+            displays = windows.map { it.displayId }.distinct().sorted().take(16),
+            foreignWindows = scoped.filter { it.ownerUid != fixtureUid }.take(16).flatMap {
+                listOf(it.ownerUid, it.layoutParamsType, it.inputConfig, it.layoutParamsFlags)
+            }
         )
     }
 

@@ -6,6 +6,7 @@ public final class InputWindowHandle {
     public int ownerUid;
     public int inputConfig;
     public int layoutParamsFlags;
+    public int layoutParamsType;
 
     private InputWindowHandle() {
         throw new UnsupportedOperationException("Platform declaration only");

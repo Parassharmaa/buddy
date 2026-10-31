@@ -85,7 +85,8 @@ class FixtureWorkspace private constructor(
             state.getInt("windowMetadataStatus", -1),
             state.getInt("windowMetadataCount"),
             state.getInt("windowMetadataScopedCount"),
-            (state.getIntArray("windowMetadataDisplays") ?: intArrayOf()).take(16)
+            (state.getIntArray("windowMetadataDisplays") ?: intArrayOf()).take(16),
+            (state.getIntArray("windowMetadataForeign") ?: intArrayOf()).take(64)
         )
         val captured = FixtureScreenService.capture(scope, privacy)
         check(startedGeneration == generation && !handedOver && !closed.get())

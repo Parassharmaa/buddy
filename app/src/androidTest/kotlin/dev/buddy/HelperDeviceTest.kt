@@ -119,7 +119,10 @@ class HelperDeviceTest {
                     )}; scoped=${privacy.getInt("windowMetadataScopedCount")}; " +
                     "displays=${privacy.getIntArray("windowMetadataDisplays")?.contentToString()})"
             }
-            check(!privacy.getBoolean("secureWindow") && !privacy.getBoolean("mixedWindowOwners"))
+            check(!privacy.getBoolean("secureWindow") && !privacy.getBoolean("mixedWindowOwners")) {
+                "Fixture privacy blocked; secure=${privacy.getBoolean("secureWindow")}; " +
+                    "foreign=${privacy.getIntArray("windowMetadataForeign")?.contentToString()}"
+            }
             stage = "takeover"
             connected.takeOverFixture(lease, token, UUID.randomUUID().toString())
             node(0) { it.text?.toString() == "Sent to Alice: $text" }
