@@ -15,7 +15,10 @@ class SystemInputMonitorPolicyTest {
     }
 
     @Test fun visibleOrUnmeasuredLayersRemainForeign() {
-        for ((width, height) in listOf(1 to 0, 0 to 1, 1 to 1, null to 0, 0 to null, null to null)) {
+        for ((width, height) in listOf(
+            1 to 0, 0 to 1, 1 to 1, -1 to 0, 0 to -1, -2 to -2, null to 0, 0 to null,
+            null to null
+        )) {
             assertFalse(policy.matches(1000, 2015, base, 0, true, width, height))
         }
     }
@@ -33,5 +36,12 @@ class SystemInputMonitorPolicyTest {
         for (config in listOf(4, base xor (1 shl 14), base or (1 shl 18), base or (1 shl 22))) {
             assertFalse(policy.matches(1000, 2015, config, 0, true, 0, 0))
         }
+    }
+
+    @Test fun acceptsTheMeasuredContainerSentinelButNeverUnknownDimensions() {
+        assertTrue(policy.matches(1000, 2015, base, 0, true, -1, -1))
+        assertFalse(policy.matches(1000, 2015, base, 0, true, null, null))
+        assertFalse(policy.matches(1000, 2015, base, 0, true, -1, null))
+        assertFalse(policy.matches(1000, 2015, base, 0x2000, true, -1, -1))
     }
 }

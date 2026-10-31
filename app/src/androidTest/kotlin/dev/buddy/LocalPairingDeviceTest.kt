@@ -86,6 +86,9 @@ class LocalPairingDeviceTest {
         var portPageVisible = false
         var portScrollAttempts = 0
         var portProbeStatus = "not_attempted"
+        var pairingCodeSeen = false
+        var pairingPortSeen = false
+        var pairingDialogSeen = false
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -231,6 +234,20 @@ class LocalPairingDeviceTest {
                     delay(200)
                 }
             }
+            stage = "wireless_daemon_ready"
+            withTimeout(15_000) {
+                while (true) {
+                    if (allowNetwork()) {
+                        delay(150)
+                        continue
+                    }
+                    if (nodes().any { it.text?.toString()?.let(::portIn) != null }) break
+                    val probe = withContext(Dispatchers.IO) { probeDaemonPort(context, automation) }
+                    portProbeStatus = probe.second
+                    if (probe.first != null) break
+                    delay(200)
+                }
+            }
             stage = "open_pairing_dialog"
             withTimeout(10_000) {
                 while (true) {
@@ -245,9 +262,26 @@ class LocalPairingDeviceTest {
             stage = "read_pairing_dialog"
             val pairingPort = withTimeout(10_000) {
                 while (true) {
-                    val text = nodes().mapNotNull { it.text?.toString() }
-                    val pairingCode = text.firstOrNull { it.matches(Regex("[0-9]{6}|[0-9]{3} [0-9]{3}")) }
+                    if (allowNetwork()) {
+                        delay(150)
+                        continue
+                    }
+                    val controls = nodes()
+                    val text = controls.mapNotNull { it.text?.toString() }
+                    val pairingCode = text.firstOrNull {
+                        it.matches(Regex("[0-9]{3}[\\s\\u00a0\\u202f]?[0-9]{3}"))
+                    }
                     val port = text.firstNotNullOfOrNull(::portIn)
+                    pairingCodeSeen = pairingCodeSeen || pairingCode != null
+                    pairingPortSeen = pairingPortSeen || port != null
+                    val dialogVisible = text.any { it.contains("Wi-Fi pairing code", ignoreCase = true) }
+                    pairingDialogSeen = pairingDialogSeen || dialogVisible
+                    if (!dialogVisible && text.any { it.contains("Use wireless debugging", ignoreCase = true) }) {
+                        controls.firstOrNull {
+                            it.text?.toString()?.contains("Pair device with pairing code", ignoreCase = true) == true &&
+                                it.isEnabled && it.isVisibleToUser
+                        }?.let(::click)
+                    }
                     if (pairingCode != null && port != null) {
                         code = pairingCode.toCharArray()
                         return@withTimeout port
@@ -415,7 +449,8 @@ class LocalPairingDeviceTest {
                     "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited; " +
                     "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled; " +
                     "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen; " +
-                    "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts; portProbe=$portProbeStatus",
+                    "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts; portProbe=$portProbeStatus; " +
+                    "pairCodeSeen=$pairingCodeSeen; pairPortSeen=$pairingPortSeen; pairDialogSeen=$pairingDialogSeen",
                 failure
             )
         } finally {

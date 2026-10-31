@@ -1,6 +1,8 @@
 package dev.buddy.helper
 
-// Android 37.2 GestureMonitorSpyWindow has an input channel but no graphical buffer.
+// GestureMonitorSpyWindow is a container with an input channel and no graphical buffer.
+// SurfaceFlinger's RequestedLayerState::getBufferSize returns INVALID_RECT without a texture;
+// LayerSnapshotBuilder projects its -1 x -1 dimensions into contentSize. A failed query is null.
 internal class SystemInputMonitorPolicy(
     private val overlayType: Int,
     notFocusable: Int,
@@ -18,5 +20,5 @@ internal class SystemInputMonitorPolicy(
     }
     fun matches(uid: Int, type: Int, config: Int, flags: Int, hasToken: Boolean, width: Int?, height: Int?): Boolean =
         uid == 1000 && type == overlayType && config in configs && flags == 0 && hasToken &&
-            width == 0 && height == 0
+            ((width == 0 && height == 0) || (width == -1 && height == -1))
 }

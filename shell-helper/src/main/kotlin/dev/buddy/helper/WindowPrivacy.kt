@@ -94,6 +94,7 @@ internal object WindowPrivacy {
 
         fun matches(window: InputWindowHandle): Boolean {
             val values = geometry(window)
+            if (values[3] != 0) return false
             return policy.matches(
                 window.ownerUid,
                 window.layoutParamsType,
