@@ -42,7 +42,16 @@ android {
         signingConfigs.getByName("debug").storeType = "PKCS12"
     }
 }
+val robolectricSdk = configurations.create("robolectricSdk") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+val prepareRobolectricSdk = tasks.register<Sync>("prepareRobolectricSdk") {
+    from(robolectricSdk)
+    into(layout.buildDirectory.dir("robolectric-sdk"))
+}
 dependencies {
+    add(robolectricSdk.name, libs.robolectricSdk)
     compileOnly(project(":platform-api"))
     implementation(libs.work.runtime)
     implementation(project(":browser"))
@@ -79,11 +88,14 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
+    dependsOn(prepareRobolectricSdk)
+    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     // Robolectric's Android FD adapter needs this JDK 27 test-only export.
     jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     maxHeapSize = "2g"
     systemProperty("buddy.capture.dir", rootProject.file("captures").absolutePath)
-    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    systemProperty("robolectric.offline", "true")
+    systemProperty("robolectric.dependency.dir", layout.buildDirectory.dir("robolectric-sdk").get().asFile.absolutePath)
     listOf(
         "http.proxyHost",
         "http.proxyPort",
