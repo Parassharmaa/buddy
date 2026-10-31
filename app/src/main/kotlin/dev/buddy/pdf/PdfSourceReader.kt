@@ -137,9 +137,10 @@ internal class PdfSourceReader(context: Context, private val store: EncryptedSto
                         override fun onNullBinding(name: ComponentName) = fail()
                     }
                     connection = selected
+                    // ContextWrapper delegates this overload on Android 16; its typed-flags overload throws.
                     bound = application.bindIsolatedService(
                         Intent(application, IsolatedPdfService::class.java),
-                        Context.BindServiceFlags.of(Context.BIND_AUTO_CREATE.toLong()),
+                        Context.BIND_AUTO_CREATE,
                         request.replace("-", ""),
                         application.mainExecutor,
                         selected
