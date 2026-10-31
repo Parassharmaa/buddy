@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,10 @@ import dev.buddy.BuddyViewModel
     var choosing by remember { mutableStateOf(false) }
     val busy = state.testingModel || state.modelCatalog.loading
     val catalog = state.modelCatalog.takeIf { it.base == base.trim().trimEnd('/') }
+    LaunchedEffect(state.modelSaveSequence, state.clearingData) {
+        key = ""
+        showKey = false
+    }
     Text("Bring your own model", style = MaterialTheme.typography.titleLarge)
     Text(
         "Use an OpenAI-compatible chat API with streaming and tool calling. Task-relevant text and screen content may go directly to this provider when those capabilities are enabled."
@@ -67,6 +72,7 @@ import dev.buddy.BuddyViewModel
         label = {
             Text("API base URL")
         },
+        enabled = !busy,
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri
@@ -75,7 +81,7 @@ import dev.buddy.BuddyViewModel
     )
     OutlinedTextField(name, {
         name = it
-    }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    }, label = { Text("Model ID") }, enabled = !busy, singleLine = true, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(
         key,
         {
@@ -85,6 +91,7 @@ import dev.buddy.BuddyViewModel
             Text(if (state.configured) "API key · blank keeps saved key" else "API key")
         },
         visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+        enabled = !busy,
         trailingIcon = {
             TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide key" else "Show key") }
         },
@@ -114,30 +121,53 @@ import dev.buddy.BuddyViewModel
             choosing = false
         }, { choosing = false })
     }
-    Button(
-        onClick = {
+    ModelSetupActions(
+        testing = state.testingModel,
+        saving = state.savingModel,
+        loading = state.modelCatalog.loading,
+        canSave = state.loaded && !state.clearingData && base.isNotBlank() && name.isNotBlank(),
+        onTest = {
             model.saveModel(base, name, key, false)
-            key = ""
             showKey = false
+            choosing = false
         },
-        enabled =
-            state.loaded && !busy && !state.clearingData && base.isNotBlank() && name.isNotBlank()
-    ) {
-        if (state.testingModel) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(if (state.testingModel) "Testing model" else "Save and test model")
-    }
-    TextButton(
-        onClick = {
+        onSaveUnverified = {
             model.saveModel(base, name, key, false, saveUnverified = true)
-            key = ""
             showKey = false
+            choosing = false
         },
-        enabled = state.loaded && !busy && !state.clearingData && base.isNotBlank() && name.isNotBlank()
-    ) { Text("Save anyway · Unverified") }
+        onCancel = model::cancelModelSetup
+    )
     Text(state.modelStatus)
+}
+
+@Composable internal fun ModelSetupActions(
+    testing: Boolean,
+    saving: Boolean,
+    loading: Boolean,
+    canSave: Boolean,
+    onTest: () -> Unit,
+    onSaveUnverified: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val busy = testing || loading
+    FlowRow {
+        Button(onClick = onTest, enabled = canSave && !busy) {
+            if (testing) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                when {
+                    saving -> "Saving model"
+                    testing -> "Testing model"
+                    else -> "Save and test model"
+                }
+            )
+        }
+        if (busy && !saving) TextButton(onClick = onCancel) { Text("Cancel request") }
+    }
+    TextButton(onClick = onSaveUnverified, enabled = canSave && !busy) { Text("Save anyway · Unverified") }
 }
 
 @Composable internal fun ModelPicker(models: List<String>, select: (String) -> Unit, dismiss: () -> Unit) {

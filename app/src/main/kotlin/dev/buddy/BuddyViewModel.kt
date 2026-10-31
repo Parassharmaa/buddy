@@ -51,6 +51,8 @@ data class BuddyState(
     val history: List<Conversation> = emptyList(),
     val configured: Boolean = false,
     val testingModel: Boolean = false,
+    val savingModel: Boolean = false,
+    val modelSaveSequence: Long = 0,
     val modelCatalog: ModelCatalogState = ModelCatalogState(),
     val modelStatus: String = "Choose and test a model",
     val modelBase: String = "https://api.openai.com/v1",
@@ -239,6 +241,11 @@ class BuddyViewModel(
                     )
                 }
             } catch (cancelled: CancellationException) {
+                if (!_state.value.clearingData) {
+                    _state.update {
+                        it.copy(modelCatalog = it.modelCatalog.copy(status = "Model list request cancelled."))
+                    }
+                }
                 throw cancelled
             } catch (failure: Exception) {
                 _state.update {
@@ -256,6 +263,14 @@ class BuddyViewModel(
         }
     }
 
+    fun cancelModelSetup() {
+        if (!_state.value.savingModel && !_state.value.clearingData &&
+            (_state.value.testingModel || _state.value.modelCatalog.loading)
+        ) {
+            modelTestJob?.cancel()
+        }
+    }
+
     fun saveModel(base: String, name: String, key: String, localHttp: Boolean, saveUnverified: Boolean = false) {
         if (_state.value.testingModel || _state.value.modelCatalog.loading ||
             !_state.value.loaded || _state.value.clearingData
@@ -265,6 +280,7 @@ class BuddyViewModel(
         _state.update {
             it.copy(
                 testingModel = true,
+                savingModel = saveUnverified,
                 modelStatus = if (saveUnverified) "Saving unverified model" else "Testing a harmless tool call"
             )
         }
@@ -274,12 +290,14 @@ class BuddyViewModel(
                 val previous = config
                 val next = modelCandidate(base, name, key, localHttp).copy(toolCallingVerified = !saveUnverified)
                 val result = if (saveUnverified) "Unverified · saved without a connection test" else client.probe(next)
+                _state.update { it.copy(savingModel = true) }
                 val commit: suspend () -> Unit = {
                     persistence.withLock { store.put("model-config", "secret", json.encodeToString(next)) }
                     config = next
                     _state.update {
                         it.copy(
                             configured = true,
+                            modelSaveSequence = it.modelSaveSequence + 1,
                             modelBase = next.baseUrl,
                             modelName = next.model,
                             localHttp = next.localHttp,
@@ -290,6 +308,11 @@ class BuddyViewModel(
                 }
                 if (next != previous) EngineeringSessions.supervisor.quiesce(commit) else commit()
             } catch (cancelled: CancellationException) {
+                if (!_state.value.savingModel && !_state.value.clearingData) {
+                    _state.update {
+                        it.copy(modelStatus = "Connection check cancelled. Saved settings were not changed.")
+                    }
+                }
                 throw cancelled
             } catch (failure: Exception) {
                 _state.update {
@@ -300,7 +323,7 @@ class BuddyViewModel(
                     )
                 }
             } finally {
-                _state.update { it.copy(testingModel = false) }
+                _state.update { it.copy(testingModel = false, savingModel = false) }
             }
         }
     }
