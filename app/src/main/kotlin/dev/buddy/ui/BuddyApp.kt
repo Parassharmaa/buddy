@@ -54,7 +54,7 @@ private enum class Destination(val label: String) {
     SETTINGS("Settings")
 }
 
-@Composable fun BuddyApp(model: BuddyViewModel) {
+@Composable fun BuddyApp(model: BuddyViewModel, automationRequests: Int = 0) {
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_STOP) {
         model.browser.foreground(false)
     }
@@ -63,6 +63,9 @@ private enum class Destination(val label: String) {
     }
     val state by model.state.collectAsStateWithLifecycle()
     var destination by rememberSaveable { mutableStateOf(Destination.CHAT) }
+    androidx.compose.runtime.LaunchedEffect(automationRequests) {
+        if (automationRequests > 0) destination = Destination.AUTOMATIONS
+    }
     val expanded = currentWindowAdaptiveInfoV2().windowSizeClass.isWidthAtLeastBreakpoint(840)
     NavigationSuiteScaffold(navigationSuiteItems = {
         Destination.entries.forEach { item ->
