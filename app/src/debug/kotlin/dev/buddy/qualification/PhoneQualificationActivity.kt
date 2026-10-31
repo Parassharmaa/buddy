@@ -21,14 +21,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -119,120 +116,131 @@ class PhoneQualificationActivity : ComponentActivity() {
                     rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                         notificationsAllowed = it
                     }
-                Column(
-                    Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()
-                        .verticalScroll(rememberScrollState()).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    TextButton(onClick = { finish() }) { Text("Back to Buddy") }
-                    Text("Foreground fixture check", style = MaterialTheme.typography.headlineMedium)
-                    Text("${Build.MANUFACTURER} ${Build.MODEL} · Android API ${Build.VERSION.SDK_INT}")
-                    Text("Edits the signed offline test fixture and checks protected-page suppression.")
-                    Text("Foreground checks stop when you leave this screen or it loses focus.")
-                    Text("Install the matching fixture APK from the same CI run, then pair in Phone connection.")
-                    TextButton(
-                        onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                        enabled = !busy && supervised.id == null
-                    ) { Text("Open fixture accessibility settings") }
-                    Text(if (connected) "Fixture accessibility is connected" else "Enable Buddy fixture access first")
-                    if (!networkAllowed && Build.VERSION.SDK_INT >= 37) {
+                QualificationFrame(
+                    active = busy || supervised.id != null,
+                    stop = {
+                        if (supervised.id != null) {
+                            FixtureTaskService.stop(this@PhoneQualificationActivity)
+                        } else {
+                            stopCheck()
+                        }
+                    }
+                ) { insets ->
+                    Column(
+                        Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)
+                            .verticalScroll(rememberScrollState()).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        TextButton(onClick = { finish() }) { Text("Back to Buddy") }
+                        Text("Phone fixture checks", style = MaterialTheme.typography.headlineMedium)
+                        Text("${Build.MANUFACTURER} ${Build.MODEL} · Android API ${Build.VERSION.SDK_INT}")
+                        Text("Edits the signed offline test fixture and checks protected-page suppression.")
+                        Text("Foreground checks stop when you leave this screen or it loses focus.")
+                        Text("Install the matching fixture APK from the same CI run, then pair in Phone connection.")
                         TextButton(
-                            onClick = { network.launch("android.permission.ACCESS_LOCAL_NETWORK") },
+                            onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                             enabled = !busy && supervised.id == null
-                        ) { Text("Allow local network access") }
-                    }
-                    OutlinedTextField(
-                        value = port,
-                        onValueChange = { if (it.length <= 5 && it.all(Char::isDigit)) port = it },
-                        label = { Text("Wireless debugging connection port") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        enabled = !busy && supervised.id == null,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text("Physical-screen typing fixture", style = MaterialTheme.typography.titleMedium)
-                    AndroidView(factory = { physical }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp))
-                    Button(
-                        onClick = { startCheck() },
-                        enabled =
-                            !busy && supervised.id == null && connected && networkAllowed &&
-                                Build.VERSION.SDK_INT >= 34 &&
-                                port.toIntOrNull() in 1..65535
-                    ) { Text("Run foreground check") }
-                    Text("The model check sends fixed synthetic fixture data to the model saved in Settings.")
-                    Text(
-                        "Returning resumes the fixed draft test. Custom edits stay out of model context " +
-                            "and may be replaced by the test."
-                    )
-                    Button(
-                        onClick = { startCheck(useModel = true) },
-                        enabled =
-                            !busy && supervised.id == null && connected && networkAllowed &&
-                                Build.VERSION.SDK_INT >= 34 &&
-                                port.toIntOrNull() in 1..65535
-                    ) { Text("Check configured model on fixture") }
-                    Text(
-                        "Supervised checks can continue while you use another app. " +
-                            "A notification provides Stop; locking the phone stops the check."
-                    )
-                    if (!notificationsAllowed) {
-                        TextButton(onClick = {
-                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }) {
-                            Text("Allow check notifications")
+                        ) { Text("Open fixture accessibility settings") }
+                        Text(
+                            if (connected) "Fixture accessibility is connected" else "Enable Buddy fixture access first"
+                        )
+                        if (!networkAllowed && Build.VERSION.SDK_INT >= 37) {
+                            TextButton(
+                                onClick = { network.launch("android.permission.ACCESS_LOCAL_NETWORK") },
+                                enabled = !busy && supervised.id == null
+                            ) { Text("Allow local network access") }
                         }
-                    }
-                    Button(
-                        onClick = {
-                            if (!FixtureTaskService.start(this@PhoneQualificationActivity, port.toIntOrNull() ?: 0)) {
-                                status = "Keep this screen open and allow notifications before starting."
-                            }
-                        },
-                        enabled =
-                            !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
-                                Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
-                    ) { Text("Run model check with notification") }
-                    Button(
-                        onClick = {
-                            FixtureTaskService.start(
-                                this@PhoneQualificationActivity,
-                                port.toIntOrNull() ?: 0,
-                                takeover = true
-                            )
-                        },
-                        enabled =
-                            !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
-                                Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
-                    ) { Text("Check takeover and return") }
-                    Text(
-                        "The takeover check uses no model. Type the test word human in the moved fixture draft. " +
-                            "Open Buddy through its notification, then choose Return. Finish within a minute."
-                    )
-                    if (supervised.id != null) {
-                        if (supervised.takeover == FixtureTakeoverPhase.READY) {
-                            Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, false) }) {
-                                Text("Take over fixture")
+                        OutlinedTextField(
+                            value = port,
+                            onValueChange = { if (it.length <= 5 && it.all(Char::isDigit)) port = it },
+                            label = { Text("Wireless debugging connection port") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            enabled = !busy && supervised.id == null,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("Physical-screen typing fixture", style = MaterialTheme.typography.titleMedium)
+                        AndroidView(factory = { physical }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp))
+                        Button(
+                            onClick = { startCheck() },
+                            enabled =
+                                !busy && supervised.id == null && connected && networkAllowed &&
+                                    Build.VERSION.SDK_INT >= 34 &&
+                                    port.toIntOrNull() in 1..65535
+                        ) { Text("Run foreground check") }
+                        Text("The model check sends fixed synthetic fixture data to the model saved in Settings.")
+                        Text(
+                            "Returning resumes the fixed draft test. Custom edits stay out of model context " +
+                                "and may be replaced by the test."
+                        )
+                        Button(
+                            onClick = { startCheck(useModel = true) },
+                            enabled =
+                                !busy && supervised.id == null && connected && networkAllowed &&
+                                    Build.VERSION.SDK_INT >= 34 &&
+                                    port.toIntOrNull() in 1..65535
+                        ) { Text("Check configured model on fixture") }
+                        Text(
+                            "Supervised checks can continue while you use another app. " +
+                                "A notification provides Stop; locking the phone stops the check."
+                        )
+                        if (!notificationsAllowed) {
+                            TextButton(onClick = {
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }) {
+                                Text("Allow check notifications")
                             }
                         }
-                        if (supervised.takeover == FixtureTakeoverPhase.HUMAN) {
-                            Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, true) }) {
-                                Text("Return fixture to workspace")
+                        Button(
+                            onClick = {
+                                if (!FixtureTaskService.start(
+                                        this@PhoneQualificationActivity,
+                                        port.toIntOrNull() ?: 0
+                                    )
+                                ) {
+                                    status = "Keep this screen open and allow notifications before starting."
+                                }
+                            },
+                            enabled =
+                                !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
+                                    Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
+                        ) { Text("Run model check with notification") }
+                        Button(
+                            onClick = {
+                                FixtureTaskService.start(
+                                    this@PhoneQualificationActivity,
+                                    port.toIntOrNull() ?: 0,
+                                    takeover = true
+                                )
+                            },
+                            enabled =
+                                !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
+                                    Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
+                        ) { Text("Check takeover and return") }
+                        Text(
+                            "The takeover check uses no model. Type the test word human in the moved fixture draft. " +
+                                "Open Buddy through its notification, then choose Return. Finish within a minute."
+                        )
+                        if (supervised.id != null) {
+                            if (supervised.takeover == FixtureTakeoverPhase.READY) {
+                                Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, false) }) {
+                                    Text("Take over fixture")
+                                }
+                            }
+                            if (supervised.takeover == FixtureTakeoverPhase.HUMAN) {
+                                Button(onClick = { FixtureTaskService.move(this@PhoneQualificationActivity, true) }) {
+                                    Text("Return fixture to workspace")
+                                }
                             }
                         }
+                        Text(supervised.message)
+                        FixturePreviewCard(if (supervised.id != null) supervised.preview else preview)
+                        Text(status)
+                        Text(
+                            "This is partial M0 evidence. Same-app coexistence, takeover, lock, revocation and OEM " +
+                                "qualification remain part of the full device suite. General phone control stays gated."
+                        )
                     }
-                    Text(supervised.message)
-                    FixturePreviewCard(if (supervised.id != null) supervised.preview else preview)
-                    if (supervised.id != null) {
-                        TextButton(onClick = { FixtureTaskService.stop(this@PhoneQualificationActivity) }) {
-                            Text("Stop supervised check")
-                        }
-                    }
-                    if (busy) TextButton(onClick = ::stopCheck) { Text("Stop check") }
-                    Text(status)
-                    Text(
-                        "This is partial M0 evidence. Same-app coexistence, takeover, lock, revocation and OEM " +
-                            "qualification remain part of the full device suite. General phone control stays gated."
-                    )
                 }
             }
         }
