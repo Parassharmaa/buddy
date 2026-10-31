@@ -39,11 +39,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+data class ModelCatalogState(
+    val loading: Boolean = false,
+    val base: String = "",
+    val models: List<String> = emptyList(),
+    val status: String = ""
+)
+
 data class BuddyState(
     val conversation: Conversation = newConversation(),
     val history: List<Conversation> = emptyList(),
     val configured: Boolean = false,
     val testingModel: Boolean = false,
+    val modelCatalog: ModelCatalogState = ModelCatalogState(),
     val modelStatus: String = "Choose and test a model",
     val modelBase: String = "https://api.openai.com/v1",
     val modelName: String = "",
@@ -185,8 +193,75 @@ class BuddyViewModel(
     fun dismissError() {
         _state.update { it.copy(error = null) }
     }
+    private fun modelCandidate(base: String, name: String, key: String, localHttp: Boolean): ModelConfig {
+        val endpoint = ModelEndpoint.forModel(base, BuildConfig.DEBUG && localHttp)
+        val previous = config
+        if (key.isBlank() && previous != null &&
+            ModelEndpoint.parse(previous.baseUrl, previous.localHttp).uri.authority != endpoint.uri.authority
+        ) {
+            throw ModelFailure(
+                "key",
+                "Enter a new API key when changing the provider address. " +
+                    "Saved keys are never forwarded to another provider."
+            )
+        }
+        return ModelConfig(
+            endpoint.uri.toString().trimEnd('/'),
+            name.trim(),
+            key.ifBlank { previous?.apiKey.orEmpty() },
+            localHttp
+        )
+    }
+
+    fun loadModels(base: String, key: String, localHttp: Boolean = false) {
+        if (_state.value.testingModel || _state.value.modelCatalog.loading ||
+            !_state.value.loaded || _state.value.clearingData
+        ) {
+            return
+        }
+        val address = base.trim().trimEnd('/')
+        _state.update { it.copy(modelCatalog = ModelCatalogState(loading = true, base = address)) }
+        modelTestJob = viewModelScope.launch {
+            try {
+                val candidate = modelCandidate(base, "", key, localHttp)
+                val models = client.listModels(candidate)
+                _state.update {
+                    it.copy(
+                        modelCatalog = ModelCatalogState(
+                            base = address,
+                            models = models,
+                            status = if (models.isEmpty()) {
+                                "No model IDs listed. Enter one manually."
+                            } else {
+                                "Model IDs loaded. Test the selected model to verify tool calling."
+                            }
+                        )
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _state.update {
+                    it.copy(
+                        modelCatalog = ModelCatalogState(
+                            base = address,
+                            status = (failure as? ModelFailure)?.message
+                                ?: "Models could not be listed. Check the HTTPS address or enter a model ID manually."
+                        )
+                    )
+                }
+            } finally {
+                _state.update { it.copy(modelCatalog = it.modelCatalog.copy(loading = false)) }
+            }
+        }
+    }
+
     fun saveModel(base: String, name: String, key: String, localHttp: Boolean, saveUnverified: Boolean = false) {
-        if (_state.value.testingModel || !_state.value.loaded || _state.value.clearingData) return
+        if (_state.value.testingModel || _state.value.modelCatalog.loading ||
+            !_state.value.loaded || _state.value.clearingData
+        ) {
+            return
+        }
         _state.update {
             it.copy(
                 testingModel = true,
@@ -195,29 +270,9 @@ class BuddyViewModel(
         }
         modelTestJob = viewModelScope.launch {
             try {
-                ModelEndpoint.forModel(base, BuildConfig.DEBUG && localHttp)
                 require(name.isNotBlank() && name.length <= 200)
                 val previous = config
-                if (key.isBlank() && previous != null &&
-                    ModelEndpoint.parse(previous.baseUrl, previous.localHttp).uri.authority !=
-                    ModelEndpoint.parse(base, localHttp).uri.authority
-                ) {
-                    throw ModelFailure(
-                        "key",
-                        "Enter a new API key when changing the provider address. " +
-                            "Saved keys are never forwarded to another provider."
-                    )
-                }
-                val next =
-                    ModelConfig(
-                        base.trim().trimEnd('/'),
-                        name.trim(),
-                        key.ifBlank {
-                            previous?.apiKey.orEmpty()
-                        },
-                        localHttp,
-                        toolCallingVerified = !saveUnverified
-                    )
+                val next = modelCandidate(base, name, key, localHttp).copy(toolCallingVerified = !saveUnverified)
                 val result = if (saveUnverified) "Unverified · saved without a connection test" else client.probe(next)
                 val commit: suspend () -> Unit = {
                     persistence.withLock { store.put("model-config", "secret", json.encodeToString(next)) }

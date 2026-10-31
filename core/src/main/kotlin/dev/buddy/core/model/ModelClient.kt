@@ -19,6 +19,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
@@ -67,8 +70,42 @@ class ModelClient(private val allowLoopbackHttpForTests: Boolean = false) :
             .header("Accept", "text/event-stream, application/json")
             .apply { if (config.apiKey.isNotBlank()) header("Authorization", "Bearer " + config.apiKey) }
             .build()
-        return suspendCancellableCoroutine { continuation ->
+        return execute(request, 90, ::parse)
+    }
+
+    suspend fun listModels(config: ModelConfig): List<String> {
+        val endpoint = ModelEndpoint.forModel(config.baseUrl, allowLoopbackHttpForTests && config.localHttp)
+        val request = Request.Builder().url(endpoint.uri.toString().trimEnd('/') + "/models")
+            .header("Accept", "application/json")
+            .apply { if (config.apiKey.isNotBlank()) header("Authorization", "Bearer " + config.apiKey) }
+            .build()
+        return execute(request, 15) { response ->
+            requireSuccess(response)
+            val source = response.body.source()
+            source.request(512 * 1024L + 1)
+            require(source.buffer.size <= 512 * 1024L) { "Model list limit" }
+            val bytes = source.buffer.readByteArray()
+            val data = try {
+                json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true))
+                    .jsonObject.getValue("data").jsonArray
+            } finally {
+                bytes.fill(0)
+            }
+            require(data.size <= 2048) { "Model count limit" }
+            data.map { row ->
+                val id = row.jsonObject.getValue("id").jsonPrimitive
+                require(id.isString && id.content.isNotBlank() && id.content.length <= 200)
+                require(id.content.none { it.isISOControl() || Character.getType(it) == Character.FORMAT.toInt() })
+                id.content.encodeToByteArray(throwOnInvalidSequence = true)
+                id.content
+            }.distinct().sorted()
+        }
+    }
+
+    private suspend fun <T> execute(request: Request, timeoutSeconds: Long, parse: (Response) -> T): T =
+        suspendCancellableCoroutine { continuation ->
             val call = http.newCall(request)
+            call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -84,7 +121,6 @@ class ModelClient(private val allowLoopbackHttpForTests: Boolean = false) :
                 }
             })
         }
-    }
 
     private fun safeFailure(failure: Exception): ModelFailure = when (failure) {
         is ModelFailure -> failure
@@ -97,7 +133,7 @@ class ModelClient(private val allowLoopbackHttpForTests: Boolean = false) :
         )
     }
 
-    private fun parse(response: Response): ModelReply {
+    private fun requireSuccess(response: Response) {
         when (response.code) {
             in 200..299 -> Unit
             401, 403 -> throw ModelFailure("authentication", "The provider rejected the API key or model access.")
@@ -106,6 +142,10 @@ class ModelClient(private val allowLoopbackHttpForTests: Boolean = false) :
             400, 404, 422 -> throw ModelFailure("protocol", "Check the API base URL, model and tool/streaming support.")
             else -> throw ModelFailure("provider", "The provider could not complete this request.")
         }
+    }
+
+    private fun parse(response: Response): ModelReply {
+        requireSuccess(response)
         val parser = StreamingReply()
         val bounded = object : FilterInputStream(response.body.byteStream()) {
             private var remaining = 4 * 1024 * 1024
