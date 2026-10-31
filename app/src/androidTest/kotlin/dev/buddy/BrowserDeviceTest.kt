@@ -64,8 +64,10 @@ class BrowserDeviceTest {
                             }
                             val content = when (path.substringBefore('?')) {
                                 "/upload" ->
-                                    "<button id='pick' style='width:240px;height:80px' " +
-                                        "onclick=\"document.getElementById('upload').click()\">" +
+                                    "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                                        "<button id='pick' style='width:240px;height:80px' " +
+                                        "onclick=\"window.fixtureClicks=(window.fixtureClicks||0)+1;" +
+                                        "document.getElementById('upload').click()\">" +
                                         "Choose synthetic file</button>" +
                                         "<input id='upload' type='file' accept='.txt'>" +
                                         "<script>window.uploadResults=[];" +
@@ -423,12 +425,30 @@ class BrowserDeviceTest {
                     root.getChildAt(0) as android.webkit.WebView
                 }
                 var stage = "FIRST_CHOOSER"
+                var expectedClicks = 0
                 suspend fun choose() {
+                    withContext(Dispatchers.Main) {
+                        withTimeout(2_000) {
+                            suspendCancellableCoroutine { continuation ->
+                                view.postVisualStateCallback(
+                                    0,
+                                    object : android.webkit.WebView.VisualStateCallback() {
+                                        override fun onComplete(requestId: Long) {
+                                            if (continuation.isActive) continuation.resume(Unit)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        assertTrue("Upload fixture is not visible", view.isShown)
+                        assertTrue("Upload fixture has no input focus", view.hasWindowFocus())
+                    }
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
                     // Fresh bounds from our fixed fixture produce a real user gesture, not an input replay.
                     val encoded = script(
                         view,
                         "(function(){const r=document.getElementById('pick').getBoundingClientRect();" +
-                            "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,innerWidth]);})()"
+                            "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,visualViewport.width]);})()"
                     )
                     val bounds = Json.parseToJsonElement(
                         Json.parseToJsonElement(encoded).jsonPrimitive.content
@@ -448,6 +468,14 @@ class BrowserDeviceTest {
                             InstrumentationRegistry.getInstrumentation()
                         ).click(point.first, point.second)
                     )
+                    expectedClicks++
+                    try {
+                        withTimeout(2_000) {
+                            while (script(view, "window.fixtureClicks||0") != expectedClicks.toString()) delay(20)
+                        }
+                    } catch (failure: Exception) {
+                        throw AssertionError("Upload fixture did not receive the gesture at $stage", failure)
+                    }
                     try {
                         withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
                     } catch (failure: Exception) {
