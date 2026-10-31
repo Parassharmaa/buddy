@@ -114,7 +114,12 @@ private enum class Destination(val label: String) {
             Row(Modifier.fillMaxSize().padding(padding)) {
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                     when (destination) {
-                        Destination.CHAT -> Chat(state, { destination = Destination.SETTINGS }, model::draft) {
+                        Destination.CHAT -> Chat(
+                            state,
+                            { destination = Destination.SETTINGS },
+                            model::draft,
+                            model.memory::remember
+                        ) {
                             FilesPanel(state, model)
                             SourcePanel(state, model.sources)
                         }
@@ -161,6 +166,7 @@ private enum class Destination(val label: String) {
         }
     }
     SourceConsentDialog(model.sources) { destination = Destination.CHAT }
+    MemoryEditorDialog(model.memory)
     state.error?.let { error ->
         AlertDialog(onDismissRequest = model::dismissError, title = {
             Text("Needs attention")
