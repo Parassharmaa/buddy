@@ -143,7 +143,7 @@ internal class PdfSourceReader(context: Context, private val store: EncryptedSto
                     bound = application.bindIsolatedService(
                         Intent(application, IsolatedPdfService::class.java),
                         Context.BindServiceFlags.of(Context.BIND_AUTO_CREATE.toLong()),
-                        request,
+                        request.replace("-", ""),
                         application.mainExecutor,
                         selected
                     )
