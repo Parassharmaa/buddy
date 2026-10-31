@@ -1,5 +1,11 @@
 name: Android
 on:
+  workflow_dispatch:
+    inputs:
+      android17_diagnostics:
+        description: 'Also run Android 17 / 16 KB device diagnostics'
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -7,7 +13,7 @@ permissions:
   contents: read
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   verify:
     name: Build, host tests and lint
@@ -61,13 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image-api: '36'
-            target: google_apis_playstore
-            page-size: '4096'
-          - image-api: '37.2'
-            target: google_apis_playstore_ps16k
-            page-size: '16384'
+        include: ${{ fromJSON(inputs.android17_diagnostics && '[{"image-api":"36","target":"google_apis_playstore","page-size":"4096"},{"image-api":"37.2","target":"google_apis_playstore_ps16k","page-size":"16384"}]' || '[{"image-api":"36","target":"google_apis_playstore","page-size":"4096"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
