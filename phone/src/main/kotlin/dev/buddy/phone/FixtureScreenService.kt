@@ -50,8 +50,12 @@ internal data class FixtureSnapshot(
     val metadataPending: Boolean = false
 ) {
     init {
-        require(!metadataPending || (observation.nodes.isEmpty() && observation.excludedOverlay &&
-            !observation.protected && !observation.credentialSurface))
+        require(
+            !metadataPending || (
+                observation.nodes.isEmpty() && observation.excludedOverlay &&
+                    !observation.protected && !observation.credentialSurface
+                )
+        )
     }
 }
 
@@ -190,8 +194,10 @@ class FixtureScreenService : AccessibilityService() {
             is FilteredObservation.Suppressed -> FixtureSnapshot(
                 observation.copy(nodes = emptyList(), excludedOverlay = excluded || !privateInput),
                 emptyMap(),
-                metadataPending = !privateInput && (windows.isEmpty() ||
-                    (windows.size == 1 && windows.single().root == null))
+                metadataPending = !privateInput && (
+                    windows.isEmpty() ||
+                        (windows.size == 1 && windows.single().root == null)
+                    )
             )
         }
     }
