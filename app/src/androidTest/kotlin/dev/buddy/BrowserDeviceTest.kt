@@ -163,9 +163,10 @@ class BrowserDeviceTest {
                     .getChildAt(0) as android.webkit.WebView
             }
             val host = withContext(Dispatchers.Main) {
-                PrivateWebHost.create(activity).also { it.park(activity.session) }
+                PrivateWebHost.create(activity)
             }
             try {
+                withContext(Dispatchers.Main) { host.park(activity.session) }
                 withTimeout(5_000) {
                     while (!withContext(Dispatchers.Main) { view.width == 720 && view.height == 1280 }) delay(20)
                     while (host.renderedFrames == 0L) delay(20)

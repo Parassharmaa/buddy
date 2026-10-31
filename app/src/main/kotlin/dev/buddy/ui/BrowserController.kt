@@ -35,6 +35,8 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     private var reader: Job? = null
     private var pending: WebAddress? = null
     private var privateHost: PrivateWebHost? = null
+    private var handover: Job? = null
+    private var handoverEpoch = 0L
     private var foreground = true
     private var showing = false
     private val _state = MutableStateFlow(BrowserPanelState())
@@ -51,6 +53,7 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
                 created.state.collect { value ->
                     if (session === created) {
                         if (created.isClosed) {
+                            cancelHandover()
                             privateHost?.close()
                             privateHost = null
                         }
@@ -83,10 +86,11 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
     }
     fun attach(context: Context): WebView {
         val current = ensure(context)
+        cancelHandover()
+        privateHost?.close()
+        privateHost = null
         showing = true
         return current.attach(context).also { view ->
-            privateHost?.close()
-            privateHost = null
             if (view.isAttachedToWindow) {
                 loadPending()
             } else {
@@ -106,30 +110,70 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
         session?.navigate(address)
     }
     fun detach() {
+        if (!showing) return
         showing = false
         reader?.cancel()
         val current = session ?: return
         if (foreground && !current.isClosed && current.state.value.canMute &&
             current.state.value.address.isNotEmpty()
         ) {
-            try {
-                val host = privateHost ?: PrivateWebHost.create(requireNotNull(application)).also { privateHost = it }
-                host.park(current)
-            } catch (_: Exception) {
-                privateHost?.close()
-                privateHost = null
-                current.detach()
-                _state.update { it.copy(error = "This device paused the page. Open Browser to continue.") }
-            }
+            park(current)
         } else {
             current.detach()
+        }
+    }
+    private fun cancelHandover() {
+        handoverEpoch++
+        handover?.cancel()
+        handover = null
+    }
+    private fun park(current: WebSession) {
+        cancelHandover()
+        privateHost?.close()
+        privateHost = null
+        val ticket = handoverEpoch
+        val host = try {
+            PrivateWebHost.create(requireNotNull(application))
+        } catch (_: Exception) {
+            current.detach()
+            _state.update { it.copy(error = "This device paused the page. Open Browser to continue.") }
+            return
+        }
+        privateHost = host
+        handover = scope.launch {
+            var ready = false
+            try {
+                host.park(current)
+                ready = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The finally block releases a failed host without disturbing a newer handover.
+            } finally {
+                if (!ready && ticket == handoverEpoch && privateHost === host) {
+                    host.close()
+                    privateHost = null
+                    current.detach()
+                    _state.update { it.copy(error = "This device paused the page. Open Browser to continue.") }
+                }
+            }
         }
     }
     fun foreground(active: Boolean) {
         foreground = active
         if (!active) {
             reader?.cancel()
+            cancelHandover()
+            privateHost?.close()
+            privateHost = null
             session?.detach()
+            return
+        }
+        val current = session
+        if (!showing && current != null && !current.isClosed && current.state.value.canMute &&
+            current.state.value.address.isNotEmpty()
+        ) {
+            park(current)
             return
         }
         session?.resume(userControl = showing)
@@ -183,6 +227,7 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
         }
     }
     fun close() {
+        cancelHandover()
         reader?.cancel()
         collector?.cancel()
         privateHost?.close()
@@ -193,6 +238,7 @@ internal class BrowserController(context: Context?, private val scope: Coroutine
         _state.value = BrowserPanelState()
     }
     suspend fun clearData() = withContext(Dispatchers.Main.immediate) {
+        cancelHandover()
         reader?.cancel()
         reader?.join()
         collector?.cancel()

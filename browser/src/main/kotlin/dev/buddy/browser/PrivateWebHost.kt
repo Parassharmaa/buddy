@@ -13,6 +13,8 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebView
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 
 /** App-owned private display. Frames are drained and discarded without reading pixels. */
 class PrivateWebHost private constructor(private val application: Context) : AutoCloseable {
@@ -80,18 +82,26 @@ class PrivateWebHost private constructor(private val application: Context) : Aut
             }
     }
 
-    fun park(current: WebSession) {
+    suspend fun park(current: WebSession) {
         check(Looper.myLooper() == Looper.getMainLooper() && !closed)
         check(session == null || session === current)
         current.detach()
         val window = requireNotNull(presentation)
+        val previousFrames = renderedFrames
         val view = current.attach(window.context, userControl = false)
         hostedView = view
         session = current
         window.setContentView(view)
         window.show()
         window.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        check(view.isAttachedToWindow)
+        withTimeout(5_000) {
+            while (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0 ||
+                renderedFrames <= previousFrames
+            ) {
+                check(!closed && !current.isClosed)
+                delay(16)
+            }
+        }
     }
 
     fun resize(width: Int, height: Int) {
