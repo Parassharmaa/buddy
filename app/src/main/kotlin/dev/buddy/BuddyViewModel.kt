@@ -23,6 +23,7 @@ import dev.buddy.storage.EncryptedStore
 import dev.buddy.storage.HistoryRetention
 import dev.buddy.storage.WorkspaceArtifact
 import dev.buddy.ui.BrowserController
+import dev.buddy.ui.MemoryController
 import dev.buddy.ui.SourceController
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -79,6 +80,7 @@ class BuddyViewModel(
     private val files = FileWorkspaceController(store, documents, viewModelScope, _state, persistence)
     internal val browser = BrowserController(browserContext, viewModelScope)
     internal val sources = SourceController(store, viewModelScope, _state, { config }, browser::source)
+    internal val memory = MemoryController(store.memories, _state, viewModelScope)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -404,6 +406,7 @@ class BuddyViewModel(
         if (_state.value.active || _state.value.importing || _state.value.exporting) return
         files.cancel()
         sources.cancel(clearDraft = true)
+        memory.dismissEditor()
         _state.update { it.copy(conversation = newConversation(), draft = "", error = null, artifacts = emptyList()) }
     }
     fun openConversation(id: String) {
@@ -411,6 +414,7 @@ class BuddyViewModel(
         files.cancel()
         val saved = _state.value.history.firstOrNull { it.id == id } ?: return
         sources.cancel(clearDraft = true)
+        memory.dismissEditor()
         _state.update { it.copy(conversation = saved, draft = "", error = null, artifacts = emptyList()) }
         files.open(id)
     }
@@ -431,6 +435,7 @@ class BuddyViewModel(
         if (!_state.value.loaded) return
         sources.cancel(clearDraft = true)
         val pendingFiles = files.cancel()
+        val pendingMemory = memory.cancel()
         val pendingModel = stopModel(persistRecord = false)
         val pendingLoad = loadingJob
         loadingJob = null
@@ -445,6 +450,7 @@ class BuddyViewModel(
         viewModelScope.launch {
             pendingModel?.join()
             pendingFiles?.join()
+            pendingMemory?.join()
             pendingLoad?.join()
             pendingTest?.join()
             val identityRemoved = phone.disconnect(true)
@@ -471,6 +477,18 @@ class BuddyViewModel(
         }
     }
     fun importDocument(uri: Uri) = files.importDocument(uri)
+    fun setMemoryEnabled(enabled: Boolean) {
+        if (!enabled) sources.removeMemories()
+        memory.enabled(enabled)
+    }
+    fun deleteMemory(id: String) {
+        sources.remove(id)
+        memory.delete(id)
+    }
+    fun clearMemories() {
+        sources.removeMemories()
+        memory.clear()
+    }
     fun downloadFile(id: String) {
         val admitted = files.importDownload {
             val grant = browser.approveDownload(id) ?: error("Download approval expired")
@@ -513,6 +531,7 @@ class BuddyViewModel(
         viewModelScope.launch { phone.disconnect(forget) }
     }
     override fun onCleared() {
+        memory.cancel()
         sources.cancel(clearDraft = true)
         browser.close()
         downloader.close()

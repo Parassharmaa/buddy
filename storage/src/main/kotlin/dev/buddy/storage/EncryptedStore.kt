@@ -26,6 +26,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -75,12 +77,23 @@ enum class HistoryRetention(val days: Int?) {
 class EncryptedStore(context: Context) :
     ActionJournal,
     java.io.Closeable {
+    private companion object {
+        val memoryOperations = Mutex()
+    }
     override fun close() {
         database.close()
     }
     private val database = Room.databaseBuilder(context, BuddyDatabase::class.java, "buddy.db").build()
     private val dao = database.records()
     val artifacts: WorkspaceArtifacts by lazy { WorkspaceArtifacts(context.applicationContext, this) }
+    val memories: MemoryRepository by lazy { MemoryRepository(this) }
+    internal suspend fun <T> mutateMemory(operation: suspend () -> T): T = memoryOperations.withLock {
+        database.withTransaction { operation() }
+    }
+    internal suspend fun eraseMemories() = mutateMemory {
+        dao.all("memory").forEach { dao.remove(it.id) }
+        dao.remove("memory-enabled")
+    }
     private val key: SecretKey by lazy {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("buddy.records.v1", null) as SecretKey?)
@@ -138,7 +151,7 @@ class EncryptedStore(context: Context) :
             dao.remove(id)
         }
     }
-    suspend fun clear() = artifacts.clearRecordsAndFiles { dao.clear() }
+    suspend fun clear() = memoryOperations.withLock { artifacts.clearRecordsAndFiles { dao.clear() } }
     suspend fun historyRetention(): HistoryRetention = get("history-retention")?.let(HistoryRetention::valueOf)
         ?: HistoryRetention.THIRTY_DAYS
     suspend fun setHistoryRetention(retention: HistoryRetention) {

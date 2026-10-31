@@ -76,6 +76,7 @@ import dev.buddy.storage.HistoryRetention
                     "Models" to state.modelStatus,
                     "Phone connection" to status,
                     "Privacy" to "Encrypted on this phone · screenshots off",
+                    "Memory" to "Preferences you choose to save",
                     "Diagnostics" to "Capabilities and build details"
                 ).forEach { (title, subtitle) ->
                     Card(onClick = { section = title }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
@@ -88,6 +89,8 @@ import dev.buddy.storage.HistoryRetention
             }
 
             "Models" -> ModelSettings(state, model)
+
+            "Memory" -> MemoryScreen(model, !state.loaded || state.active || state.importing || state.exporting)
 
             "Phone connection" -> {
                 Text(status, style = MaterialTheme.typography.titleMedium)
@@ -189,7 +192,7 @@ import dev.buddy.storage.HistoryRetention
                 }
                 Text("Your provider: " + if (state.configured) state.modelBase else "Not configured")
                 Text(
-                    "Model keys, conversations, files and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
+                    "Model keys, conversations, files, memories and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
                 )
                 Text(
                     "Local deletion does not delete copies retained by your model provider or Android’s paired debugging identity."
@@ -204,7 +207,7 @@ import dev.buddy.storage.HistoryRetention
                         Text("Delete Buddy’s local data?")
                     }, text = {
                         Text(
-                            "This removes model settings, keys, history and action records, and disconnects phone control. Also remove Buddy in Android’s Wireless debugging paired devices."
+                            "This removes model settings, keys, history, files, memories and action records, and disconnects phone control. Also remove Buddy in Android’s Wireless debugging paired devices."
                         )
                     }, confirmButton = {
                         TextButton(onClick = {

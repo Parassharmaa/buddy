@@ -36,6 +36,7 @@ import dev.buddy.BuddyState
     state: BuddyState,
     settings: () -> Unit,
     draft: (String) -> Unit,
+    rememberMessage: (Int) -> Unit = {},
     files: @Composable () -> Unit = {}
 ) {
     LazyColumn(
@@ -153,6 +154,13 @@ import dev.buddy.BuddyState
                             "Reference: ${source.label}${if (source.truncated) " (excerpt)" else ""}",
                             style = MaterialTheme.typography.bodySmall
                         )
+                    }
+                    if (message.role == "user") {
+                        TextButton(onClick = {
+                            rememberMessage(indexed.index)
+                        }, enabled = state.loaded && !state.active) {
+                            Text("Remember")
+                        }
                     }
                 }
             }

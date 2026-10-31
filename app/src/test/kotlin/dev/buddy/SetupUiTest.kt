@@ -3,6 +3,7 @@ package dev.buddy
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -51,6 +52,10 @@ class SetupUiTest {
         compose.onNodeWithText("Diagnostics").performClick()
         compose.onNodeWithText("Diagnostics").assertIsDisplayed()
         screenshot("05-diagnostics")
+        compose.onNodeWithText("Back to settings").performScrollTo().performClick()
+        compose.onNodeWithText("Memory").performScrollTo().performClick()
+        compose.onNodeWithText("Save preferences").assertIsDisplayed().assertIsOff()
+        screenshot("07-memory")
         compose.onNodeWithText("Browser").performClick()
         compose.onNodeWithText("Website address").assertIsDisplayed()
         screenshot("06-browser")

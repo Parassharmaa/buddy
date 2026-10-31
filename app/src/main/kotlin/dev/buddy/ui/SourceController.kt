@@ -70,7 +70,7 @@ internal class SourceController(
             } catch (_: Exception) {
                 if (ticket == epoch) {
                     _state.value = SourcePanelState()
-                    error("This source could not be prepared. Use a readable text document or a public page.")
+                    error("This source could not be prepared. Open it again and check its privacy or size limits.")
                 }
             }
         }
@@ -80,6 +80,10 @@ internal class SourceController(
         val file = buddy.value.artifacts.firstOrNull { it.id == id } ?: return
         if (file.mimeType !in setOf("text/plain", "text/markdown", "application/json")) {
             error("Only text documents can be sent as model context in this build.")
+            return
+        }
+        if (file.bytes > 256 * 1024) {
+            error("Text previews are limited to 256 KiB. Choose a shorter text document.")
             return
         }
         prepare { selected ->
@@ -104,6 +108,17 @@ internal class SourceController(
             snapshot.truncated,
             selected
         )
+    }
+    fun memory(id: String) = prepare { selected ->
+        check(store.memories.enabled())
+        val memory = requireNotNull(store.memories.get(id))
+        source(memory.id, ChatSourceKind.MEMORY, "Saved preference", memory.fact, false, selected)
+    }
+    fun removeMemories() {
+        buddy.update {
+            it.copy(draftSources = it.draftSources.filterNot { source -> source.kind == ChatSourceKind.MEMORY })
+        }
+        if (_state.value.preparing || _state.value.pending?.source?.kind == ChatSourceKind.MEMORY) cancel()
     }
     private fun source(
         id: String,
@@ -151,7 +166,7 @@ internal class SourceController(
     }
     fun remove(id: String) {
         buddy.update { it.copy(draftSources = it.draftSources.filterNot { source -> source.id == id }) }
-        if (_state.value.pending?.source?.id == id) cancel()
+        if (_state.value.preparing || _state.value.pending?.source?.id == id) cancel()
     }
     fun cancel(clearDraft: Boolean = false) {
         epoch++
