@@ -13,6 +13,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,11 +33,13 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SourceConsentDeviceTest {
-    private class ModelFixture : AutoCloseable {
+    private class ModelFixture(private val stall: Boolean = false) : AutoCloseable {
         private val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         private val worker = Executors.newSingleThreadExecutor()
         val base = "http://127.0.0.1:${socket.localPort}/v1"
         val requests = CopyOnWriteArrayList<JsonObject>()
+        val started = CompletableDeferred<Unit>()
+        val closed = CompletableDeferred<Unit>()
         val catalogRequests = java.util.concurrent.atomic.AtomicInteger()
         val catalogAuthorization = java.util.concurrent.atomic.AtomicReference<String?>()
         init {
@@ -74,6 +77,27 @@ class SourceConsentDeviceTest {
                                     length =
                                         header.substringAfter(':').trim().toInt()
                                 }
+                            }
+                            if (stall) {
+                                if (!catalog) {
+                                    check(length in 1..2 * 1024 * 1024)
+                                    input.readNBytes(length)
+                                }
+                                client.getOutputStream().apply {
+                                    write(
+                                        (
+                                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n" +
+                                                "Connection: close\r\n\r\ndata: "
+                                            ).toByteArray()
+                                    )
+                                    flush()
+                                }
+                                started.complete(Unit)
+                                val end = runCatching { input.read() }
+                                if (end.getOrNull() == -1 || end.exceptionOrNull() is java.net.SocketException) {
+                                    closed.complete(Unit)
+                                }
+                                return@use
                             }
                             val reply = if (catalog) {
                                 check(length == 0)
@@ -122,6 +146,53 @@ class SourceConsentDeviceTest {
         }
         withTimeout(5_000) { model.state.first { it.loaded } }
         return model
+    }
+
+    @Test(timeout = 30_000)
+    fun cancelSetupClosesCatalogAndProbeRequestsWithoutReplacingSavedCredentials() = runBlocking {
+        org.junit.Assume.assumeTrue(
+            InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true" &&
+                android.os.Build.HARDWARE == "ranchu" && android.os.Build.FINGERPRINT.contains("sdk_gphone")
+        )
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = (context.applicationContext as BuddyApplication).store
+        val models = ViewModelStore()
+        val previous = dev.buddy.core.ModelConfig("https://old-model.invalid/v1", "old-model", "old-synthetic-key")
+        store.clear()
+        store.put("model-config", "secret", Json.encodeToString(previous))
+        try {
+            val model = loadedModel(store, models)
+            for (listing in listOf(true, false)) {
+                ModelFixture(stall = true).use { server ->
+                    withContext(Dispatchers.Main) {
+                        if (listing) {
+                            model.loadModels(server.base, "synthetic", true)
+                        } else {
+                            model.saveModel(server.base, "new-model", "synthetic", true)
+                        }
+                    }
+                    withTimeout(5_000) { server.started.await() }
+                    withContext(Dispatchers.Main) { model.cancelModelSetup() }
+                    withTimeout(2_000) {
+                        server.closed.await()
+                        model.state.first { !it.testingModel && !it.modelCatalog.loading }
+                    }
+                    assertEquals(
+                        previous,
+                        Json.decodeFromString<dev.buddy.core.ModelConfig>(
+                            requireNotNull(store.get("model-config"))
+                        )
+                    )
+                    assertEquals("old-model", model.state.value.modelName)
+                    assertEquals(0L, model.state.value.modelSaveSequence)
+                    val status = if (listing) model.state.value.modelCatalog.status else model.state.value.modelStatus
+                    assertTrue(status.contains("cancelled"))
+                }
+            }
+        } finally {
+            withContext(Dispatchers.Main) { models.clear() }
+            store.clear()
+        }
     }
 
     @Test(timeout = 45_000)
