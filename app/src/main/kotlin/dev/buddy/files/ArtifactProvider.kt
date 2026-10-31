@@ -9,12 +9,13 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Binder
 import android.os.ParcelFileDescriptor
+import android.os.storage.StorageManager
 import android.provider.OpenableColumns
+import androidx.core.net.toUri
 import dev.buddy.BuddyApplication
 import dev.buddy.storage.ArtifactReadBudget
 import dev.buddy.storage.WorkspaceArtifact
 import java.io.FileNotFoundException
-import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -74,29 +75,38 @@ class ArtifactProvider : ContentProvider() {
     }
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         if (mode != "r") throw FileNotFoundException("Read only")
+        val ticket = PrivateFileDescriptors.ticket()
         val artifact = metadata(uri)
-        val bytes = runBlocking(Dispatchers.IO) {
-            (requireNotNull(context).applicationContext as BuddyApplication).store.artifacts.read(
-                artifact.workspace,
-                artifact.id,
-                ArtifactReadBudget()
-            )
-        }
-        return try {
-            openPipeHelper(uri, artifact.mimeType, null, bytes) { descriptor, _, _, _, contents ->
-                try {
-                    ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { it.write(requireNotNull(contents)) }
-                } catch (_: IOException) {
-                    // The recipient can close its read end at any time.
-                } finally {
-                    contents?.fill(0)
-                }
+        val handle = PrivateFileDescriptors.reserve(artifact.bytes, ticket)
+        try {
+            val data = runBlocking(Dispatchers.IO) {
+                (requireNotNull(context).applicationContext as BuddyApplication).store.artifacts.read(
+                    artifact.workspace,
+                    artifact.id,
+                    ArtifactReadBudget()
+                )
             }
-        } catch (failure: Exception) {
-            bytes.fill(0)
+            if (!handle.assign(data)) throw FileNotFoundException("File unavailable")
+            return requireNotNull(context).getSystemService(StorageManager::class.java).openProxyFileDescriptor(
+                ParcelFileDescriptor.MODE_READ_ONLY,
+                handle,
+                PrivateFileDescriptors.handler
+            )
+        } catch (_: Exception) {
+            handle.onRelease()
             throw FileNotFoundException("File unavailable")
         }
     }
+    companion object {
+        fun revokeAll(context: android.content.Context) {
+            PrivateFileDescriptors.revokeAll()
+            context.revokeUriPermission(
+                "content://${context.packageName}.artifacts".toUri(),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+    }
+
     override fun insert(uri: Uri, values: ContentValues?): Uri? = error("Read only")
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int =
         error("Read only")
