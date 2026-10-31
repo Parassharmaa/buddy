@@ -68,7 +68,7 @@ class BuddyViewModel(
     browserContext: Context? = null
 ) : ViewModel() {
     private val applicationContext = browserContext?.applicationContext
-    private val client = ModelClient()
+    private val client = ModelClient(allowLoopbackHttpForTests = BuildConfig.DEBUG)
     private val downloader = BrowserDownloader()
     private val _state = MutableStateFlow(BuddyState())
     val state = _state.asStateFlow()
@@ -107,16 +107,20 @@ class BuddyViewModel(
         loadingJob = viewModelScope.launch {
             try {
                 val saved = store.get("model-config")?.let { json.decodeFromString<ModelConfig>(it) }
-                config = saved
+                val supported = saved?.takeIf {
+                    runCatching { ModelEndpoint.forModel(it.baseUrl, BuildConfig.DEBUG && it.localHttp) }.isSuccess
+                }
+                config = supported
                 _state.update {
                     it.copy(
-                        configured = saved != null,
+                        configured = supported != null,
                         modelBase = saved?.baseUrl ?: it.modelBase,
                         modelName =
                             saved?.model ?: "",
                         localHttp = saved?.localHttp ?: false,
                         modelStatus = when {
                             saved == null -> "Choose and test a model"
+                            supported == null -> "HTTPS required · update the saved model address"
                             saved.toolCallingVerified -> "Tool calling verified · saved model"
                             else -> "Unverified · test this model before phone tasks"
                         }
@@ -191,7 +195,7 @@ class BuddyViewModel(
         }
         modelTestJob = viewModelScope.launch {
             try {
-                ModelEndpoint.parse(base, localHttp)
+                ModelEndpoint.forModel(base, BuildConfig.DEBUG && localHttp)
                 require(name.isNotBlank() && name.length <= 200)
                 val previous = config
                 if (key.isBlank() && previous != null &&

@@ -28,7 +28,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
-class ModelClient :
+class ModelClient(private val allowLoopbackHttpForTests: Boolean = false) :
     ChatModel,
     java.io.Closeable {
     private val http = OkHttpClient.Builder()
@@ -47,7 +47,7 @@ class ModelClient :
         tools: List<JsonObject>
     ): ModelReply {
         require(config.model.isNotBlank() && config.model.length <= 200)
-        val endpoint = ModelEndpoint.parse(config.baseUrl, config.localHttp)
+        val endpoint = ModelEndpoint.forModel(config.baseUrl, allowLoopbackHttpForTests && config.localHttp)
         val body = buildJsonObject {
             put("model", config.model)
             put(

@@ -188,7 +188,7 @@ class FixtureTaskService : Service() {
                                     }
                                 )
                             } else {
-                                ModelClient().use { model ->
+                                ModelClient(allowLoopbackHttpForTests = true).use { model ->
                                     ModelFixtureCheck.run(
                                         applicationContext,
                                         helper,
