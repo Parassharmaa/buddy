@@ -1,8 +1,14 @@
 package dev.buddy
 
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.UiAutomation
+import android.content.Context
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -17,8 +23,10 @@ import dev.buddy.adb.BootstrapCommand
 import dev.buddy.adb.PairingClient
 import dev.buddy.connection.BootstrapProvider
 import dev.buddy.core.LoopbackPort
+import dev.buddy.qualification.AdbPortProbe
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
+import java.io.IOException
 import java.util.regex.Pattern
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -34,7 +42,8 @@ import org.junit.runner.RunWith
 // Pairing codes remain in memory: no screenshots, UI dumps, logcat, or assertion values.
 @RunWith(AndroidJUnit4::class)
 class LocalPairingDeviceTest {
-    @Test fun localPairingAuthorizesTlsAndHelperSurvivesTransportClose() = runBlocking {
+    @Test(timeout = 90_000)
+    fun localPairingAuthorizesTlsAndHelperSurvivesTransportClose() = runBlocking<Unit> {
         assumeTrue(InstrumentationRegistry.getArguments().getString("buddyPairingFixture") == "true")
         assumeTrue(Build.HARDWARE == "ranchu" && Build.FINGERPRINT.contains("sdk_gphone"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -76,6 +85,7 @@ class LocalPairingDeviceTest {
         var unavailableSeen = false
         var portPageVisible = false
         var portScrollAttempts = 0
+        var portProbeStatus = "not_attempted"
         fun nodes(): List<AccessibilityNodeInfo> {
             automation.clearCache()
             val result = mutableListOf<AccessibilityNodeInfo>()
@@ -214,51 +224,6 @@ class LocalPairingDeviceTest {
                     delay(200)
                 }
             }
-            stage = "wireless_connection_port"
-            val portSummary = Pattern.compile(
-                ".*(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}.*|\\s*:\\s*[0-9]{1,5}\\s*"
-            )
-            val connectPort = withTimeout(30_000) {
-                var searchUp = true
-                var attempt = 0
-                while (true) {
-                    allowNetwork()
-                    val controls = nodes()
-                    portPageVisible = controls.any {
-                        it.text?.toString()?.let { text ->
-                            text.contains("Use wireless debugging", ignoreCase = true) ||
-                                text.contains("Pair device with pairing code", ignoreCase = true)
-                        } == true
-                    }
-                    addressRowSeen = addressRowSeen || controls.any {
-                        it.text?.toString()?.contains("IP address", ignoreCase = true) == true
-                    }
-                    portOnlySeen = portOnlySeen || controls.any {
-                        it.text?.toString()?.trim()?.matches(Regex(":\\s*[0-9]{1,5}")) == true
-                    }
-                    unavailableSeen = unavailableSeen || controls.any {
-                        it.text?.toString()?.equals("Unavailable", ignoreCase = true) == true
-                    }
-                    controls.firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
-                        ?.let { return@withTimeout it }
-                    // A system dialog may be focused while the Settings details window remains visible.
-                    val summaries = device.findObjects(
-                        By.pkg("com.android.settings").displayId(Display.DEFAULT_DISPLAY)
-                            .text(portSummary)
-                    )
-                    summaries.firstNotNullOfOrNull { it.text?.let(::portIn) }?.let { return@withTimeout it }
-                    if (portPageVisible && ++attempt % 5 == 0) {
-                        device.findObject(
-                            By.pkg("com.android.settings").scrollable(true).displayId(Display.DEFAULT_DISPLAY)
-                        )?.let {
-                            portScrollAttempts++
-                            if (!it.scroll(if (searchUp) Direction.UP else Direction.DOWN, 0.7f)) searchUp = !searchUp
-                        }
-                    }
-                    delay(150)
-                }
-                error("Wireless connection details unavailable")
-            }
             stage = "open_pairing_dialog"
             withTimeout(10_000) {
                 while (true) {
@@ -287,7 +252,7 @@ class LocalPairingDeviceTest {
                 }
                 error("Pairing details unavailable")
             }
-            withContext(Dispatchers.IO) {
+            val connectPort = withContext(Dispatchers.IO) {
                 stage = "local_tls_pairing"
                 PairingClient(identity).use { client ->
                     val secret = requireNotNull(code)
@@ -296,6 +261,72 @@ class LocalPairingDeviceTest {
                     } finally {
                         secret.fill('\u0000')
                     }
+                }
+                stage = "finish_pairing_dialog"
+                val controls = nodes()
+                val onDetails = controls.any {
+                    it.text?.toString()?.let { text ->
+                        text.contains("Use wireless debugging", ignoreCase = true) ||
+                            text.contains("Pair device with pairing code", ignoreCase = true)
+                    } == true
+                }
+                if (!onDetails) {
+                    device.pressBack()
+                    delay(150)
+                }
+                stage = "wireless_connection_port"
+                val portSummary = Pattern.compile(
+                    ".*(?:[0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}.*|\\s*:\\s*[0-9]{1,5}\\s*"
+                )
+                val connectPort = withTimeout(30_000) {
+                    var searchUp = true
+                    var attempt = 0
+                    while (true) {
+                        allowNetwork()
+                        val controls = nodes()
+                        portPageVisible = controls.any {
+                            it.text?.toString()?.let { text ->
+                                text.contains("Use wireless debugging", ignoreCase = true) ||
+                                    text.contains("Pair device with pairing code", ignoreCase = true)
+                            } == true
+                        }
+                        addressRowSeen = addressRowSeen || controls.any {
+                            it.text?.toString()?.contains("IP address", ignoreCase = true) == true
+                        }
+                        portOnlySeen = portOnlySeen || controls.any {
+                            it.text?.toString()?.trim()?.matches(Regex(":\\s*[0-9]{1,5}")) == true
+                        }
+                        unavailableSeen = unavailableSeen || controls.any {
+                            it.text?.toString()?.equals("Unavailable", ignoreCase = true) == true
+                        }
+                        controls.firstNotNullOfOrNull { node -> node.text?.toString()?.let(::portIn) }
+                            ?.let { return@withTimeout it }
+                        // A system dialog may be focused while the Settings details window remains visible.
+                        val summaries = device.findObjects(
+                            By.pkg("com.android.settings").displayId(Display.DEFAULT_DISPLAY)
+                                .text(portSummary)
+                        )
+                        summaries.firstNotNullOfOrNull { it.text?.let(::portIn) }?.let { return@withTimeout it }
+                        attempt++
+                        if (attempt == 3 || (attempt % 5 == 0 && portProbeStatus == "BUDDY_ADB_PORT_NOT_READY")) {
+                            val probe = probeDaemonPort(context, automation)
+                            portProbeStatus = probe.second
+                            probe.first?.let { return@withTimeout it }
+                        }
+                        if (portPageVisible && attempt % 5 == 0) {
+                            device.findObject(
+                                By.pkg("com.android.settings").scrollable(true).displayId(Display.DEFAULT_DISPLAY)
+                            )?.let {
+                                portScrollAttempts++
+                                if (!it.scroll(if (searchUp) Direction.UP else Direction.DOWN, 0.7f)) {
+                                    searchUp =
+                                        !searchUp
+                                }
+                            }
+                        }
+                        delay(150)
+                    }
+                    error("Wireless connection details unavailable")
                 }
                 val pending = BootstrapProvider.prepare(ShellProtocol.HANDOFF)
                 val nonce = pending.nonce.copyOf()
@@ -310,6 +341,7 @@ class LocalPairingDeviceTest {
                 } finally {
                     nonce.fill(0)
                 }
+                connectPort
             }
             stage = "helper_after_transport_close"
             delay(1_000)
@@ -334,6 +366,28 @@ class LocalPairingDeviceTest {
                 challenge.fill(0)
                 BootstrapProvider.clear()
             }
+            stage = "wireless_debugging_revocation"
+            val lastProof = connectedHelper.capabilities().getLong("authorizationDeadline")
+            check(lastProof > SystemClock.elapsedRealtime())
+            shell("settings put global adb_wifi_enabled 0")
+            check(shell("settings get global adb_wifi_enabled") == "0")
+            withTimeout(10_000) {
+                while (true) {
+                    val rejected = withContext(Dispatchers.IO) {
+                        AdbTransport(identity, timeoutMs = 5_000).use { fresh ->
+                            try {
+                                fresh.connect(LoopbackPort(connectPort))
+                                false
+                            } catch (_: IOException) {
+                                true
+                            }
+                        }
+                    }
+                    if (rejected) break
+                    delay(100)
+                }
+            }
+            check(connectedHelper.capabilities().getLong("authorizationDeadline") == lastProof)
         } catch (failure: Exception) {
             val enabled = runCatching { shell("settings get global adb_wifi_enabled") == "1" }.getOrNull()
             val tls = runCatching { shell("getprop persist.adb.tls_server.enable") == "1" }.getOrNull()
@@ -349,7 +403,7 @@ class LocalPairingDeviceTest {
                     "scrollable=$scrollableSeen; scrolls=$scrollAttempts; depth=$deepestNode; limited=$treeLimited; " +
                     "wirelessPage=$wirelessPageSeen; pairingRow=$pairingRowSeen; masterToggled=$masterToggled; " +
                     "addressRow=$addressRowSeen; portOnly=$portOnlySeen; unavailable=$unavailableSeen; " +
-                    "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts",
+                    "portPageVisible=$portPageVisible; portScrolls=$portScrollAttempts; portProbe=$portProbeStatus",
                 failure
             )
         } finally {
@@ -368,6 +422,30 @@ class LocalPairingDeviceTest {
             )
             configuration.setWaitForIdleTimeout(originalIdleTimeout)
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
+    }
+
+    private fun probeDaemonPort(context: Context, automation: UiAutomation): Pair<Int?, String> {
+        val arguments = BootstrapCommand.forInstalledApp(context).arguments.take(4) + AdbPortProbe::class.java.name
+        val command = arguments.joinToString(" ") { "'" + it.replace("'", "'\"'\"'") + "'" }
+        val descriptors = automation.executeShellCommandRwe(command)
+        return try {
+            val poll = StructPollfd().apply {
+                fd = descriptors[0].fileDescriptor
+                events = OsConstants.POLLIN.toShort()
+            }
+            if (Os.poll(arrayOf(poll), 3_000) <= 0) return null to "timeout"
+            val buffer = ByteArray(256)
+            val count = Os.read(descriptors[0].fileDescriptor, buffer, 0, buffer.size)
+            val output = if (count > 0) String(buffer, 0, count, Charsets.UTF_8) else ""
+            val port = Regex("(?m)^BUDDY_ADB_PORT:([0-9]{1,5})$").find(output)?.groupValues?.get(1)
+                ?.toIntOrNull()?.takeIf { it in 1..65535 }
+            val status = output.lineSequence().firstOrNull {
+                it.matches(Regex("BUDDY_ADB_PORT_(?:NOT_READY|FAILED:[A-Za-z0-9_]{1,64})"))
+            } ?: if (port != null) "ready" else "unavailable"
+            port to status
+        } finally {
+            descriptors.forEach { runCatching { it.close() } }
         }
     }
 }
