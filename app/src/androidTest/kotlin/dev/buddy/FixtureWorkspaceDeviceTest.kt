@@ -66,12 +66,13 @@ class FixtureWorkspaceDeviceTest {
                     EncryptedStore(context).use { store ->
                         store.clear()
                         stage = "open_workspace"
+                        val runId = UUID.randomUUID().toString()
                         val workspace = FixtureWorkspace.open(
                             context,
                             bootstrap.helper,
                             ActionExecutor(store, SystemClock::elapsedRealtime),
                             frames.surface,
-                            UUID.randomUUID().toString(),
+                            runId,
                             recordEvidence = { observation ->
                                 store.put("evidence:${observation.id}", "evidence", Json.encodeToString(observation))
                             }
@@ -108,9 +109,14 @@ class FixtureWorkspaceDeviceTest {
                             fun gate() =
                                 DispatchGate(false, false, false, true, true, Long.MAX_VALUE, Long.MAX_VALUE, false)
                             stage = "observe_initial_tree"
-                            val initial = ready { it.nodes.any { node -> node.editable } }
+                            ready { it.nodes.any { node -> node.editable } }
+                            if (!secureOnly) {
+                                stage = "bounded_agent_fixture"
+                                FixtureAgentProbe.verify(workspace, store, runId)
+                            }
+                            val current = ready { it.nodes.any { node -> node.editable } }
                             val message = "こんにちは Buddy · café"
-                            val draft = workspace.prepareDraft(initial, message)
+                            val draft = workspace.prepareDraft(current, message)
                             stage = "dispatch_draft"
                             val draftResult = workspace.execute(draft, gate = { gate() })
                             assertTrue("Draft execution: $draftResult", draftResult is ExecutionResult.Verified)

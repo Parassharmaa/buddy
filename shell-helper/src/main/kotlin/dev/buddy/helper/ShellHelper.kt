@@ -273,7 +273,13 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
         )
         val managerClass = Class.forName("android.hardware.input.InputManagerGlobal")
         val manager = managerClass.getMethod("getInstance").invoke(null)
-        val inject = managerClass.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
+        val inject = managerClass.getMethod(
+            "injectInputEvent",
+            InputEvent::class.java,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType
+        )
+        check(display.fixtureUid >= 10000)
         val setDisplay = InputEvent::class.java.getDeclaredMethod("setDisplayId", Int::class.javaPrimitiveType)
         val start = SystemClock.uptimeMillis()
         fun event(action: Int) {
@@ -281,7 +287,8 @@ internal class ShellHelper(private val context: Context, private val appUid: Int
             event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
             try {
                 setDisplay.invoke(event, display.display.display.displayId)
-                check(inject.invoke(manager, event, 2) == true)
+                // Android rejects delivery if a different UID takes the point after our task check.
+                check(inject.invoke(manager, event, 2, display.fixtureUid) == true)
             } finally {
                 event.recycle()
             }
