@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.buddy.BuddyState
@@ -261,6 +262,7 @@ import kotlinx.coroutines.launch
     var base by rememberSaveable(state.modelBase) { mutableStateOf(state.modelBase) }
     var name by rememberSaveable(state.modelName) { mutableStateOf(state.modelName) }
     var key by remember { mutableStateOf("") }
+    var showKey by remember { mutableStateOf(false) }
     var local by rememberSaveable(state.localHttp) { mutableStateOf(state.localHttp) }
     Text("Bring your own model", style = MaterialTheme.typography.titleLarge)
     Text(
@@ -291,7 +293,10 @@ import kotlinx.coroutines.launch
         label = {
             Text(if (state.configured) "API key · blank keeps saved key" else "API key")
         },
-        visualTransformation = PasswordVisualTransformation(),
+        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide key" else "Show key") }
+        },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Password
@@ -318,9 +323,10 @@ import kotlinx.coroutines.launch
         onClick = {
             model.saveModel(base, name, key, local)
             key = ""
+            showKey = false
         },
         enabled =
-            !state.testingModel && base.isNotBlank() && name.isNotBlank()
+            state.loaded && !state.testingModel && !state.clearingData && base.isNotBlank() && name.isNotBlank()
     ) {
         if (state.testingModel) {
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -328,6 +334,14 @@ import kotlinx.coroutines.launch
         }
         Text(if (state.testingModel) "Testing model" else "Save and test model")
     }
+    TextButton(
+        onClick = {
+            model.saveModel(base, name, key, local, saveUnverified = true)
+            key = ""
+            showKey = false
+        },
+        enabled = state.loaded && !state.testingModel && !state.clearingData && base.isNotBlank() && name.isNotBlank()
+    ) { Text("Save anyway · Unverified") }
     Text(state.modelStatus)
 }
 
