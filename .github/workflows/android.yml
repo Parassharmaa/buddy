@@ -10,9 +10,54 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
-    name: verify (Android ${{ matrix.image-api }})
+    name: Build, host tests and lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '27'
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          add-job-summary: on-failure
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          cmdline-tools-version: '16111833'
+          log-accepted-android-sdk-licenses: false
+          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2'
+      - name: Native protocol tests
+        run: bash scripts/check-native.sh
+      - name: Use one debug signing identity for this test run
+        run: |
+          keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$RUNNER_TEMP/buddy-debug.keystore" -storepass android -keypass android -alias androiddebugkey -dname "CN=Buddy Android CI" -keyalg RSA -keysize 2048 -validity 3650
+          printf 'BUDDY_DEBUG_KEYSTORE=%s\n' "$RUNNER_TEMP/buddy-debug.keystore" >> "$GITHUB_ENV"
+      - name: Tests, Kotlin style, Android lint and APKs
+        run: |
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
+          ./gradlew --no-daemon --no-parallel --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:assembleRelease :fixture:assembleRelease lintRelease
+      - name: Verify APK signatures, alignment and optimized entry points
+        run: |
+          python3 scripts/check-apk-signatures.py
+          python3 scripts/check-release.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: buddy-development-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            fixture/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  device:
+    name: device (Android ${{ matrix.image-api }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -42,29 +87,15 @@ jobs:
           cmdline-tools-version: '16111833'
           log-accepted-android-sdk-licenses: false
           packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2 emulator system-images;android-${{ matrix.image-api }};${{ matrix.target }};x86_64'
-      - name: Native protocol tests
-        run: bash scripts/check-native.sh
       - name: Use one debug signing identity for this test run
         run: |
           keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$RUNNER_TEMP/buddy-debug.keystore" -storepass android -keypass android -alias androiddebugkey -dname "CN=Buddy Android CI" -keyalg RSA -keysize 2048 -validity 3650
           printf 'BUDDY_DEBUG_KEYSTORE=%s\n' "$RUNNER_TEMP/buddy-debug.keystore" >> "$GITHUB_ENV"
-      - name: Tests, Kotlin style, Android lint and APKs
+      - name: Compile device probes before starting Android
         run: |
-          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process lintKotlin :core:test :adb:testDebugUnitTest :pairing-native:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :fixture:assembleDebug lintDebug
-          ./gradlew --no-daemon --no-parallel --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:assembleRelease :fixture:assembleRelease lintRelease
-          ./gradlew --no-daemon --no-parallel --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :pairing-native:assembleDebugAndroidTest :adb:assembleDebugAndroidTest :storage:assembleDebugAndroidTest :fixture:assembleDebugAndroidTest :app:assembleDebugAndroidTest
-      - name: Verify APK signatures, alignment and optimized entry points
-        run: |
-          python3 scripts/check-apk-signatures.py
-          python3 scripts/check-release.py
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: buddy-development-apks-api${{ matrix.image-api }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            fixture/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
+          ./gradlew --no-daemon --no-parallel --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :pairing-native:assembleDebugAndroidTest :adb:assembleDebugAndroidTest :storage:assembleDebugAndroidTest :fixture:assembleDebugAndroidTest :app:assembleDebugAndroidTest :app:assembleDebug :fixture:assembleDebug
+      - name: Verify matching fixture and app signatures
+        run: python3 scripts/check-apk-signatures.py
       - name: Install emulator runtime libraries and enable KVM
         run: |
           sudo apt-get update -qq

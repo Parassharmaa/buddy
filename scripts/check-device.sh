@@ -69,7 +69,10 @@ device_gradle_args=(--no-daemon --no-parallel --max-workers=2 --continue
     -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true
     -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000)
 device_result=0
-./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest || device_result=1
+if ! ./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest; then
+    device_result=1
+    python3 scripts/report-device-exits.py
+fi
 # AGP owns installation/cleanup of each instrumentation target. Install the final
 # rebuilt fixture after its own suite, before the independent Buddy suite.
 python3 scripts/check-apk-signatures.py
@@ -81,5 +84,8 @@ if (( $(adb shell getprop ro.build.version.sdk | tr -d '\r') >= 37 )); then
     adb shell pm grant dev.buddy android.permission.ACCESS_LOCAL_NETWORK
 fi
 prepare_device
-./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest || device_result=1
+if ! ./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest; then
+    device_result=1
+    python3 scripts/report-device-exits.py
+fi
 exit "$device_result"
