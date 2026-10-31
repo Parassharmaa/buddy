@@ -24,7 +24,7 @@ class MemoryRepository internal constructor(private val records: EncryptedStore)
         MemorySnapshot(enabled, entries(rows).filter { it.deletedAt == null }.sortedByDescending { it.changedAt })
     }
     suspend fun enabled(): Boolean = records.get("memory-enabled") == "true"
-    suspend fun setEnabled(enabled: Boolean) = records.mutateMemory {
+    suspend fun setEnabled(enabled: Boolean) = records.mutatePrivateRecords {
         records.put("memory-enabled", "memory-settings", enabled.toString())
     }
     suspend fun get(id: String): SavedMemory? {
@@ -32,23 +32,24 @@ class MemoryRepository internal constructor(private val records: EncryptedStore)
         return records.get("memory:$id")?.let { json.decodeFromString<SavedMemory>(it) }?.also(MemoryPolicy::validate)
             ?.takeIf { it.deletedAt == null }
     }
-    suspend fun save(fact: String, sourceMessageId: String, enable: Boolean): SavedMemory = records.mutateMemory {
-        check(enabled() || enable)
-        val existing = entries(records.list("memory", "memory:"))
-        check(existing.count { it.deletedAt == null } < MemoryPolicy.MAX_FACTS)
-        val now = System.currentTimeMillis()
-        val memory = SavedMemory(UUID.randomUUID().toString(), MemoryPolicy.fact(fact), sourceMessageId, now, now)
-        MemoryPolicy.validate(memory)
-        records.put("memory:${memory.id}", "memory", json.encodeToString(memory))
-        if (enable) records.put("memory-enabled", "memory-settings", "true")
-        existing.filter { it.deletedAt != null }.sortedByDescending { it.deletedAt }.drop(MemoryPolicy.MAX_FACTS)
-            .forEach { records.remove("memory:${it.id}") }
-        memory
-    }
-    suspend fun edit(id: String, fact: String) = records.mutateMemory {
+    suspend fun save(fact: String, sourceMessageId: String, enable: Boolean): SavedMemory =
+        records.mutatePrivateRecords {
+            check(enabled() || enable)
+            val existing = entries(records.list("memory", "memory:"))
+            check(existing.count { it.deletedAt == null } < MemoryPolicy.MAX_FACTS)
+            val now = System.currentTimeMillis()
+            val memory = SavedMemory(UUID.randomUUID().toString(), MemoryPolicy.fact(fact), sourceMessageId, now, now)
+            MemoryPolicy.validate(memory)
+            records.put("memory:${memory.id}", "memory", json.encodeToString(memory))
+            if (enable) records.put("memory-enabled", "memory-settings", "true")
+            existing.filter { it.deletedAt != null }.sortedByDescending { it.deletedAt }.drop(MemoryPolicy.MAX_FACTS)
+                .forEach { records.remove("memory:${it.id}") }
+            memory
+        }
+    suspend fun edit(id: String, fact: String) = records.mutatePrivateRecords {
         val existing = requireNotNull(get(id))
         val value = MemoryPolicy.fact(fact)
-        if (value == existing.fact) return@mutateMemory
+        if (value == existing.fact) return@mutatePrivateRecords
         val next = existing.copy(
             fact = value,
             changedAt = maxOf(System.currentTimeMillis(), existing.changedAt),
@@ -62,8 +63,8 @@ class MemoryRepository internal constructor(private val records: EncryptedStore)
         MemoryPolicy.validate(next)
         records.put("memory:$id", "memory", json.encodeToString(next))
     }
-    suspend fun delete(id: String) = records.mutateMemory {
-        val existing = get(id) ?: return@mutateMemory
+    suspend fun delete(id: String) = records.mutatePrivateRecords {
+        val existing = get(id) ?: return@mutatePrivateRecords
         val now = maxOf(System.currentTimeMillis(), existing.changedAt)
         val tombstone = existing.copy(fact = "", changedAt = now, revisions = emptyList(), deletedAt = now)
         records.put("memory:$id", "memory", json.encodeToString(tombstone))

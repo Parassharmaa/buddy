@@ -85,7 +85,7 @@ class MemoryRepositoryDeviceTest {
                     val entered = CompletableDeferred<Unit>()
                     val release = CompletableDeferred<Unit>()
                     val writer = launch {
-                        store.mutateMemory {
+                        store.mutatePrivateRecords {
                             entered.complete(Unit)
                             release.await()
                             store.put("memory-enabled", "memory-settings", "true")

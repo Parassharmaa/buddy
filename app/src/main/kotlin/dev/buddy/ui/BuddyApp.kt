@@ -50,6 +50,7 @@ private enum class Destination(val label: String) {
     ),
     BROWSER("Browser"),
     ACTIVITY("Activity"),
+    AUTOMATIONS("Automations"),
     SETTINGS("Settings")
 }
 
@@ -140,6 +141,8 @@ private enum class Destination(val label: String) {
                                 Destination.CHAT
                         })
 
+                        Destination.AUTOMATIONS -> SchedulesScreen(model.schedules, state.loaded && !state.clearingData)
+
                         Destination.SETTINGS -> SettingsScreen(state, model)
                     }
                 }
@@ -208,6 +211,20 @@ private enum class Destination(val label: String) {
                     Offset(size.width / 2, size.height * 0.86f),
                     strokeWidth = 2.dp.toPx()
                 )
+            }
+
+            Destination.AUTOMATIONS -> {
+                drawRoundRect(
+                    color,
+                    Offset(3.dp.toPx(), 5.dp.toPx()),
+                    Size(18.dp.toPx(), 16.dp.toPx()),
+                    CornerRadius(2.dp.toPx()),
+                    style = stroke
+                )
+                drawLine(color, Offset(3.dp.toPx(), 10.dp.toPx()), Offset(21.dp.toPx(), 10.dp.toPx()), 1.8.dp.toPx())
+                drawLine(color, Offset(8.dp.toPx(), 3.dp.toPx()), Offset(8.dp.toPx(), 7.dp.toPx()), 1.8.dp.toPx())
+                drawLine(color, Offset(16.dp.toPx(), 3.dp.toPx()), Offset(16.dp.toPx(), 7.dp.toPx()), 1.8.dp.toPx())
+                drawCircle(color, 1.5.dp.toPx(), Offset(9.dp.toPx(), 15.dp.toPx()))
             }
 
             Destination.ACTIVITY -> {

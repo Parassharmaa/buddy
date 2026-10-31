@@ -3,11 +3,13 @@ package dev.buddy
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
@@ -59,6 +61,17 @@ class SetupUiTest {
         compose.onNodeWithText("Browser").performClick()
         compose.onNodeWithText("Website address").assertIsDisplayed()
         screenshot("06-browser")
+        compose.onNodeWithText("Automations").performClick()
+        compose.onNodeWithText("No scheduled checks").assertIsDisplayed()
+        screenshot("08-automations")
+        compose.onNodeWithText("Add check").performClick()
+        compose.onNodeWithText("Daily time (HH:mm)").assertIsDisplayed()
+        compose.onNodeWithText("Name").performTextInput("Synthetic check")
+        compose.onNodeWithText("Website URL").performTextInput("https://example.com/status")
+        compose.onNodeWithText("Save").assertIsEnabled()
+        screenshot("09-schedule-editor")
+        compose.onNodeWithText("Cancel").performScrollTo().performClick()
+        compose.onNodeWithText("No scheduled checks").assertIsDisplayed()
     }
 
     private fun screenshot(name: String) {

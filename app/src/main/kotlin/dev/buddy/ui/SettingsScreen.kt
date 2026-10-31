@@ -308,7 +308,7 @@ import dev.buddy.storage.HistoryRetention
     Text(state.modelStatus)
 }
 
-@Composable private fun LocalNetworkAccess(explanation: String) {
+@Composable internal fun LocalNetworkAccess(explanation: String) {
     if (Build.VERSION.SDK_INT < 37) return
     val context = LocalContext.current
     var granted by remember {
