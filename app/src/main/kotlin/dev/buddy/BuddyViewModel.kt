@@ -203,18 +203,21 @@ class BuddyViewModel(
                         },
                         localHttp
                     )
-                persistence.withLock { store.put("model-config", "secret", json.encodeToString(next)) }
-                config = next
-                _state.update {
-                    it.copy(
-                        configured = true,
-                        modelBase = next.baseUrl,
-                        modelName = next.model,
-                        localHttp = next.localHttp,
-                        testingModel = true,
-                        modelStatus = "Testing a harmless tool call"
-                    )
+                val commit: suspend () -> Unit = {
+                    persistence.withLock { store.put("model-config", "secret", json.encodeToString(next)) }
+                    config = next
+                    _state.update {
+                        it.copy(
+                            configured = true,
+                            modelBase = next.baseUrl,
+                            modelName = next.model,
+                            localHttp = next.localHttp,
+                            testingModel = true,
+                            modelStatus = "Testing a harmless tool call"
+                        )
+                    }
                 }
+                if (next != previous) EngineeringSessions.supervisor.quiesce(commit) else commit()
                 val result = client.probe(next)
                 _state.update { it.copy(modelStatus = result) }
             } catch (cancelled: CancellationException) {
