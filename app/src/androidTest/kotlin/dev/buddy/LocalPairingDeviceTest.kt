@@ -29,6 +29,7 @@ import dev.buddy.core.connection.ActiveLease
 import dev.buddy.qualification.AdbPortProbe
 import dev.buddy.shell.IBuddyHelper
 import dev.buddy.shell.ShellProtocol
+import java.io.IOException
 import java.security.SecureRandom
 import java.util.regex.Pattern
 import kotlinx.coroutines.CompletableDeferred
@@ -492,7 +493,9 @@ class LocalPairingDeviceTest {
                 enter(Stage.WIRELESS_DEBUGGING_REVOCATION)
                 shell("settings put global adb_wifi_enabled 0")
                 check(shell("settings get global adb_wifi_enabled") == "0")
-                withTimeout(25_000) { stopped.await() }
+                check(withTimeout(25_000) { stopped.await() } is IOException) {
+                    "Revocation must reject the fresh daemon transport"
+                }
                 check(!lease.isCurrent)
                 check(connectedHelper.capabilities().getLong("authorizationDeadline") == lastProof)
                 val rejectedChallenge = ByteArray(32).also(SecureRandom()::nextBytes)
