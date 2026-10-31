@@ -31,5 +31,11 @@ class PhoneQualificationUiTest {
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
             }
         }
+        compose.onNodeWithText("Run model check with notification").performScrollTo().assertIsNotEnabled()
+        compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap ->
+            File(directory, "16-supervised-check.png").outputStream().use { output ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            }
+        }
     }
 }

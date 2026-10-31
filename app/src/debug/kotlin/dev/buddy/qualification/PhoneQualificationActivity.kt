@@ -1,5 +1,6 @@
 package dev.buddy.qualification
 
+import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -36,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -80,6 +82,7 @@ class PhoneQualificationActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var connected by mutableStateOf(false)
     private var networkAllowed by mutableStateOf(false)
+    private var notificationsAllowed by mutableStateOf(false)
     private var port by mutableStateOf("")
     private var status by mutableStateOf("Ready for a foreground-only engineering check")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,6 +112,11 @@ class PhoneQualificationActivity : ComponentActivity() {
                 val network = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                     networkAllowed = it
                 }
+                val supervised by FixtureTaskService.state.collectAsState()
+                val notificationPermission =
+                    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                        notificationsAllowed = it
+                    }
                 Column(
                     Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()
                         .verticalScroll(rememberScrollState()).padding(20.dp),
@@ -118,17 +126,17 @@ class PhoneQualificationActivity : ComponentActivity() {
                     Text("Foreground fixture check", style = MaterialTheme.typography.headlineMedium)
                     Text("${Build.MANUFACTURER} ${Build.MODEL} · Android API ${Build.VERSION.SDK_INT}")
                     Text("Edits the signed offline test fixture and checks protected-page suppression.")
-                    Text("Keep this screen visible. Leaving it or losing window focus stops the check.")
+                    Text("Foreground checks stop when you leave this screen or it loses focus.")
                     Text("Install the matching fixture APK from the same CI run, then pair in Phone connection.")
                     TextButton(
                         onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                        enabled = !busy
+                        enabled = !busy && supervised.id == null
                     ) { Text("Open fixture accessibility settings") }
                     Text(if (connected) "Fixture accessibility is connected" else "Enable Buddy fixture access first")
                     if (!networkAllowed && Build.VERSION.SDK_INT >= 37) {
                         TextButton(
                             onClick = { network.launch("android.permission.ACCESS_LOCAL_NETWORK") },
-                            enabled = !busy
+                            enabled = !busy && supervised.id == null
                         ) { Text("Allow local network access") }
                     }
                     OutlinedTextField(
@@ -137,22 +145,53 @@ class PhoneQualificationActivity : ComponentActivity() {
                         label = { Text("Wireless debugging connection port") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        enabled = !busy,
+                        enabled = !busy && supervised.id == null,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("Physical-screen typing fixture", style = MaterialTheme.typography.titleMedium)
                     AndroidView(factory = { physical }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp))
                     Button(
                         onClick = { startCheck() },
-                        enabled = !busy && connected && networkAllowed && Build.VERSION.SDK_INT >= 34 &&
-                            port.toIntOrNull() in 1..65535
+                        enabled =
+                            !busy && supervised.id == null && connected && networkAllowed &&
+                                Build.VERSION.SDK_INT >= 34 &&
+                                port.toIntOrNull() in 1..65535
                     ) { Text("Run foreground check") }
                     Text("The model check sends fixed synthetic fixture data to the model saved in Settings.")
                     Button(
                         onClick = { startCheck(useModel = true) },
-                        enabled = !busy && connected && networkAllowed && Build.VERSION.SDK_INT >= 34 &&
-                            port.toIntOrNull() in 1..65535
+                        enabled =
+                            !busy && supervised.id == null && connected && networkAllowed &&
+                                Build.VERSION.SDK_INT >= 34 &&
+                                port.toIntOrNull() in 1..65535
                     ) { Text("Check configured model on fixture") }
+                    Text(
+                        "Supervised checks can continue while you use another app. " +
+                            "A notification provides Stop; locking the phone stops the check."
+                    )
+                    if (!notificationsAllowed) {
+                        TextButton(onClick = {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }) {
+                            Text("Allow check notifications")
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            if (!FixtureTaskService.start(this@PhoneQualificationActivity, port.toIntOrNull() ?: 0)) {
+                                status = "Keep this screen open and allow notifications before starting."
+                            }
+                        },
+                        enabled =
+                            !busy && supervised.id == null && notificationsAllowed && connected && networkAllowed &&
+                                Build.VERSION.SDK_INT >= 34 && port.toIntOrNull() in 1..65535
+                    ) { Text("Run model check with notification") }
+                    Text(supervised.message)
+                    if (supervised.id != null) {
+                        TextButton(onClick = { FixtureTaskService.stop(this@PhoneQualificationActivity) }) {
+                            Text("Stop supervised check")
+                        }
+                    }
                     if (busy) TextButton(onClick = ::stopCheck) { Text("Stop check") }
                     Text(status)
                     Text(
@@ -165,6 +204,9 @@ class PhoneQualificationActivity : ComponentActivity() {
     }
     override fun onResume() {
         super.onResume()
+        notificationsAllowed = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED && getSystemService(android.app.NotificationManager::class.java)
+                .areNotificationsEnabled()
         connected = FixtureScreenService.connected
         networkAllowed = Build.VERSION.SDK_INT < 37 ||
             checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED
@@ -232,7 +274,8 @@ class PhoneQualificationActivity : ComponentActivity() {
         running?.cancel()
     }
     private fun startCheck(useModel: Boolean = false) {
-        if (busy || !connected || !networkAllowed || !visible.get() || !focused.get() ||
+        if (busy || FixtureTaskService.state.value.id != null || !connected || !networkAllowed || !visible.get() ||
+            !focused.get() ||
             Build.VERSION.SDK_INT < 34
         ) {
             return
