@@ -1,5 +1,6 @@
 package dev.buddy
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,6 +19,7 @@ import dev.buddy.files.FileWorkspaceController
 import dev.buddy.storage.EncryptedStore
 import dev.buddy.storage.HistoryRetention
 import dev.buddy.storage.WorkspaceArtifact
+import dev.buddy.ui.BrowserController
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +57,8 @@ private fun newConversation() = Conversation(UUID.randomUUID().toString(), "New 
 class BuddyViewModel(
     private val store: EncryptedStore,
     val phone: PhoneConnection,
-    private val documents: DocumentAccess? = null
+    private val documents: DocumentAccess? = null,
+    browserContext: Context? = null
 ) : ViewModel() {
     private val client = ModelClient()
     private val _state = MutableStateFlow(BuddyState())
@@ -67,6 +70,7 @@ class BuddyViewModel(
     private var epoch = 0
     private val persistence = Mutex()
     private val files = FileWorkspaceController(store, documents, viewModelScope, _state, persistence)
+    internal val browser = BrowserController(browserContext, viewModelScope)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -414,6 +418,7 @@ class BuddyViewModel(
             pendingTest?.join()
             val identityRemoved = phone.disconnect(true)
             try {
+                browser.clearData()
                 persistence.withLock { store.clear() }
                 config = null
                 _state.value = BuddyState(
@@ -465,6 +470,7 @@ class BuddyViewModel(
         viewModelScope.launch { phone.disconnect(forget) }
     }
     override fun onCleared() {
+        browser.close()
         client.close()
     }
     private suspend fun persist(conversation: Conversation = _state.value.conversation) = persistence.withLock {

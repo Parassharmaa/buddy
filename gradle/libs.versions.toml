@@ -12,6 +12,7 @@ room = "2.8.5"
 ksp = "2.3.13"
 
 [libraries]
+webkit = { module = "androidx.webkit:webkit", version = "1.18.0" }
 work-runtime = { module = "androidx.work:work-runtime", version = "2.12.0" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose" }
 compose-ui = { module = "androidx.compose.ui:ui" }
