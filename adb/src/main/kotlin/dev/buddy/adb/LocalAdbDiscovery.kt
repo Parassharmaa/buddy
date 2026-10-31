@@ -70,7 +70,7 @@ class LocalAdbDiscovery(context: Context) {
                         }
                         override fun onStopDiscoveryFailed(type: String, error: Int) = Unit
                         override fun onServiceLost(info: NsdServiceInfo) {
-                            publish(info.serviceName, null)
+                            info.serviceName?.let { publish(it, null) }
                         }
                         override fun onServiceFound(info: NsdServiceInfo) {
                             val name = info.serviceName ?: return

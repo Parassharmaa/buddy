@@ -3,6 +3,7 @@ package dev.buddy
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.buddy.adb.AdbServiceKind
 import dev.buddy.connection.PhoneConnection
 import dev.buddy.core.ChatMessage
 import dev.buddy.core.Conversation
@@ -439,6 +440,13 @@ class BuddyViewModel(
     fun exportArtifact(id: String, destination: Uri) = files.exportArtifact(id, destination)
     fun fileError(message: String) {
         _state.update { it.copy(error = message) }
+    }
+
+    fun findPairingPorts() {
+        viewModelScope.launch { phone.discover(AdbServiceKind.PAIRING) }
+    }
+    fun findConnectionPorts() {
+        viewModelScope.launch { phone.discover(AdbServiceKind.CONNECTION) }
     }
 
     fun pair(port: String, code: String) {

@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -102,6 +103,17 @@ import dev.buddy.storage.HistoryRetention
                 var pairPort by rememberSaveable { mutableStateOf("") }
                 var code by remember { mutableStateOf("") }
                 var connectPort by rememberSaveable { mutableStateOf("") }
+                val pairingPorts by model.phone.pairingPorts.collectAsStateWithLifecycle()
+                val connectionPorts by model.phone.connectionPorts.collectAsStateWithLifecycle()
+                LocalNetworkAccess("Local network access lets Buddy find this phone’s debugging ports.")
+                TextButton(onClick = model::findPairingPorts, enabled = !phoneBusy) { Text("Find pairing port") }
+                FlowRow {
+                    pairingPorts.forEach { port ->
+                        TextButton(onClick = { pairPort = port.toString() }, enabled = !phoneBusy) {
+                            Text("Use pairing port $port")
+                        }
+                    }
+                }
                 OutlinedTextField(
                     pairPort,
                     {
@@ -138,6 +150,14 @@ import dev.buddy.storage.HistoryRetention
                         !phoneBusy && pairPort.isNotBlank() && code.isNotBlank()
                 ) { Text("Pair this phone") }
                 HorizontalDivider()
+                TextButton(onClick = model::findConnectionPorts, enabled = !phoneBusy) { Text("Find connection port") }
+                FlowRow {
+                    connectionPorts.forEach { port ->
+                        TextButton(onClick = { connectPort = port.toString() }, enabled = !phoneBusy) {
+                            Text("Use connection port $port")
+                        }
+                    }
+                }
                 OutlinedTextField(
                     connectPort,
                     {
@@ -208,7 +228,6 @@ import dev.buddy.storage.HistoryRetention
 }
 
 @Composable private fun ModelSettings(state: BuddyState, model: BuddyViewModel) {
-    val context = LocalContext.current
     var base by rememberSaveable(state.modelBase) { mutableStateOf(state.modelBase) }
     var name by rememberSaveable(state.modelName) { mutableStateOf(state.modelName) }
     var key by remember { mutableStateOf("") }
@@ -264,20 +283,7 @@ import dev.buddy.storage.HistoryRetention
         "HTTP is limited to explicit local IP addresses and localhost. Traffic to those endpoints is unencrypted.",
         style = MaterialTheme.typography.bodySmall
     )
-    if (Build.VERSION.SDK_INT >= 37) {
-        var granted by remember {
-            mutableStateOf(
-                context.checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) ==
-                    PackageManager.PERMISSION_GRANTED
-            )
-        }
-        val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
-        Text("Models on your Wi-Fi network require local network access.", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            onClick = { permission.launch(android.Manifest.permission.ACCESS_LOCAL_NETWORK) },
-            enabled = !granted
-        ) { Text(if (granted) "Local network allowed" else "Allow local network models") }
-    }
+    LocalNetworkAccess("Models on your Wi-Fi network require local network access.")
     Button(
         onClick = {
             model.saveModel(base, name, key, local)
@@ -293,6 +299,29 @@ import dev.buddy.storage.HistoryRetention
         Text(if (state.testingModel) "Testing model" else "Save and test model")
     }
     Text(state.modelStatus)
+}
+
+@Composable private fun LocalNetworkAccess(explanation: String) {
+    if (Build.VERSION.SDK_INT < 37) return
+    val context = LocalContext.current
+    var granted by remember {
+        mutableStateOf(
+            context.checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        granted =
+            context.checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
+    Text(explanation, style = MaterialTheme.typography.bodySmall)
+    OutlinedButton(onClick = {
+        permission.launch(android.Manifest.permission.ACCESS_LOCAL_NETWORK)
+    }, enabled = !granted) {
+        Text(if (granted) "Local network allowed" else "Allow local network access")
+    }
 }
 
 @Composable private fun HistoryRetentionSettings(

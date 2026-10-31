@@ -2,8 +2,10 @@ package dev.buddy.connection
 
 import android.content.Context
 import dev.buddy.adb.AdbIdentity
+import dev.buddy.adb.AdbServiceKind
 import dev.buddy.adb.AdbTransport
 import dev.buddy.adb.BootstrapCommand
+import dev.buddy.adb.LocalAdbDiscovery
 import dev.buddy.adb.PairingClient
 import dev.buddy.core.LoopbackPort
 import dev.buddy.shell.IBuddyHelper
@@ -13,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -29,6 +32,10 @@ class PhoneConnection(private val context: Context) {
     val status = _status.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
+    private val _pairingPorts = MutableStateFlow<List<Int>>(emptyList())
+    val pairingPorts = _pairingPorts.asStateFlow()
+    private val _connectionPorts = MutableStateFlow<List<Int>>(emptyList())
+    val connectionPorts = _connectionPorts.asStateFlow()
     private val stateLock = Any()
     private val operations = Mutex()
     private var stopping: CompletableDeferred<Boolean>? = null
@@ -39,6 +46,7 @@ class PhoneConnection(private val context: Context) {
     private var transport: AdbTransport? = null
     private var helper: IBuddyHelper? = null
     private var pending: BootstrapProvider.Pending? = null
+    private var discovery: Job? = null
 
     private fun current(ticket: Long) = generation.get() == ticket && !disconnecting.get()
 
@@ -48,6 +56,47 @@ class PhoneConnection(private val context: Context) {
         } else {
             block()
             true
+        }
+    }
+
+    suspend fun discover(kind: AdbServiceKind) {
+        val ticket = generation.get()
+        if (!current(ticket) || !operations.tryLock()) return
+        val job = currentCoroutineContext()[Job]
+        try {
+            if (!update(ticket) {
+                    discovery = job
+                    _busy.value = true
+                    _status.value = "Finding debugging services on this phone"
+                    if (kind == AdbServiceKind.PAIRING) {
+                        _pairingPorts.value = emptyList()
+                    } else {
+                        _connectionPorts.value = emptyList()
+                    }
+                }
+            ) {
+                return
+            }
+            val ports = LocalAdbDiscovery(context).find(kind).map { it.value }
+            currentCoroutineContext().ensureActive()
+            update(ticket) {
+                if (kind == AdbServiceKind.PAIRING) _pairingPorts.value = ports else _connectionPorts.value = ports
+                _status.value = if (ports.isEmpty()) {
+                    "No local service found. Keep Wireless debugging open and enter its port manually."
+                } else {
+                    "Local port found. Pairing, TLS and helper authentication are checked separately."
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: SecurityException) {
+            update(ticket) { _status.value = "Allow local network access to find debugging ports." }
+        } catch (_: Exception) {
+            update(ticket) { _status.value = "Port discovery is unavailable. Enter the port from Android Settings." }
+        } finally {
+            synchronized(stateLock) { if (discovery === job) discovery = null }
+            update(ticket) { _busy.value = false }
+            operations.unlock()
         }
     }
 
@@ -215,10 +264,18 @@ class PhoneConnection(private val context: Context) {
                 transport = null
                 stopped
             }
+            val pendingDiscovery = synchronized(stateLock) {
+                discovery.also {
+                    discovery = null
+                    _pairingPorts.value = emptyList()
+                    _connectionPorts.value = emptyList()
+                }
+            }
             // Revoke phone control first; network shutdown and optional key removal follow.
             resources.first.forEach { runCatching { it.disconnect() } }
             resources.second?.close()
             resources.third?.close()
+            pendingDiscovery?.cancel()
             var removed = true
             var forgot = false
             operations.withLock {
