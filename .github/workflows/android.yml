@@ -38,6 +38,8 @@ jobs:
           cmdline-tools-version: '16111833'
           log-accepted-android-sdk-licenses: false
           packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0 ndk;30.0.16248370 cmake;4.1.2'
+      - name: CI result reporting tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Native protocol tests
         run: bash scripts/check-native.sh
       - name: Use one debug signing identity for this test run
@@ -113,7 +115,7 @@ jobs:
 
       - name: Report device test results
         if: always() && steps.device.outcome != 'skipped'
-        run: python3 scripts/report-device-tests.py
+        run: python3 scripts/report-device-tests.py --summary
       - name: Preserve device test XML
         if: always() && steps.device.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
