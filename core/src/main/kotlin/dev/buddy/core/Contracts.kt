@@ -104,10 +104,25 @@ data class Approval(
 enum class DispatchState { PREPARED, DISPATCHING, DISPATCHED, VERIFIED, UNCERTAIN, NOT_DISPATCHED }
 
 @Serializable
+enum class ActionFailure {
+    FINAL_GATE_CHANGED,
+    APPROVAL_EXPIRED,
+    PREPARATION_FAILED,
+    DISPATCH_FAILED,
+    RESULT_STORAGE_FAILED,
+    VERIFICATION_FAILED,
+    NO_VERIFICATION_EVIDENCE,
+    CANCELLED_BEFORE_DISPATCH,
+    CANCELLED_IN_FLIGHT
+}
+
+@Serializable
 data class ActionRecord(
     val proposal: ActionProposal,
     val state: DispatchState,
-    val evidenceIds: List<String> = emptyList()
+    val evidenceIds: List<String> = emptyList(),
+    val failure: ActionFailure? = null,
+    val elapsedMillis: Long = 0
 )
 
 @Serializable

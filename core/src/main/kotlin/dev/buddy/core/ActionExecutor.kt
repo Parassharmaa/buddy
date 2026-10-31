@@ -96,8 +96,17 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
             return@withLock ExecutionResult.Blocked("Phone control is paused or unavailable")
         }
         val record = ActionRecord(action, DispatchState.DISPATCHING)
+        val started = now()
+        fun outcome(state: DispatchState, evidence: List<String> = emptyList(), failure: ActionFailure? = null) =
+            record.copy(
+                state = state,
+                evidenceIds = evidence,
+                failure = failure,
+                elapsedMillis = (now() - started).coerceIn(0, 600_000)
+            )
         journal.begin(record, if (needsApproval) approval else null)
         var dispatchStarted = false
+        var failurePhase = ActionFailure.PREPARATION_FAILED
         try {
             // Read-only target resolution must finish before the final consent and cancellation checks.
             prepare()
@@ -107,40 +116,48 @@ class ActionExecutor(private val journal: ActionJournal, private val now: () -> 
                 now() - observation.capturedAtElapsedMs !in 0..5_000 ||
                 now() >= minOf(finalGate.leaseDeadline, finalGate.authorizationDeadline)
             ) {
-                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                journal.update(outcome(DispatchState.NOT_DISPATCHED, failure = ActionFailure.FINAL_GATE_CHANGED))
                 return@withLock ExecutionResult.Blocked("Observe the screen again before continuing")
             }
             if (needsApproval && requireNotNull(approval).expiresAtElapsedMs <= now()) {
-                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                journal.update(outcome(DispatchState.NOT_DISPATCHED, failure = ActionFailure.APPROVAL_EXPIRED))
                 return@withLock ExecutionResult.ApprovalRequired
             }
             currentCoroutineContext().ensureActive()
             dispatchStarted = true
+            failurePhase = ActionFailure.DISPATCH_FAILED
             dispatch()
-            journal.update(record.copy(state = DispatchState.DISPATCHED))
+            failurePhase = ActionFailure.RESULT_STORAGE_FAILED
+            journal.update(outcome(DispatchState.DISPATCHED))
+            failurePhase = ActionFailure.VERIFICATION_FAILED
             val evidence = verify()
             if (evidence.isEmpty()) {
-                journal.markUncertain(record)
+                journal.markUncertain(
+                    outcome(DispatchState.UNCERTAIN, failure = ActionFailure.NO_VERIFICATION_EVIDENCE)
+                )
                 ExecutionResult.Uncertain
             } else {
-                journal.update(record.copy(state = DispatchState.VERIFIED, evidenceIds = evidence))
+                failurePhase = ActionFailure.RESULT_STORAGE_FAILED
+                journal.update(outcome(DispatchState.VERIFIED, evidence))
                 ExecutionResult.Verified(evidence)
             }
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
                 if (dispatchStarted) {
-                    journal.markUncertain(record)
+                    journal.markUncertain(outcome(DispatchState.UNCERTAIN, failure = ActionFailure.CANCELLED_IN_FLIGHT))
                 } else {
-                    journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                    journal.update(
+                        outcome(DispatchState.NOT_DISPATCHED, failure = ActionFailure.CANCELLED_BEFORE_DISPATCH)
+                    )
                 }
             }
             throw cancelled
         } catch (_: Exception) {
             if (dispatchStarted) {
-                journal.markUncertain(record)
+                journal.markUncertain(outcome(DispatchState.UNCERTAIN, failure = failurePhase))
                 ExecutionResult.Uncertain
             } else {
-                journal.update(record.copy(state = DispatchState.NOT_DISPATCHED))
+                journal.update(outcome(DispatchState.NOT_DISPATCHED, failure = failurePhase))
                 ExecutionResult.Blocked("Phone control could not be checked before dispatch")
             }
         }

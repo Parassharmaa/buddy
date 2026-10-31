@@ -42,6 +42,7 @@ class ExecutorTest {
             }
         }
         override suspend fun markUncertain(record: ActionRecord) {
+            records += record.copy(state = DispatchState.UNCERTAIN)
             barriers +=
                 record.proposal.operationKey
         }
@@ -74,6 +75,7 @@ class ExecutorTest {
                 gate
             }, { writes++ }, { emptyList() })
         )
+        assertEquals(ActionFailure.NO_VERIFICATION_EVIDENCE, journal.records.last().failure)
         assertTrue(
             executor.execute(action.copy(id = "new", runId = "new-run"), observation, approval, {
                 gate
@@ -176,6 +178,7 @@ class ExecutorTest {
         assertTrue(result is ExecutionResult.Blocked)
         assertTrue(!dispatched)
         assertEquals(DispatchState.NOT_DISPATCHED, journal.records.last().state)
+        assertEquals(ActionFailure.FINAL_GATE_CHANGED, journal.records.last().failure)
         assertTrue(!journal.unresolved(action.operationKey))
     }
 
@@ -299,12 +302,16 @@ class ExecutorTest {
 
     @Test fun verificationStorageFailureCannotReportSuccessOrReplayTheEffect() = runTest {
         val journal = Journal()
-        val executor = ActionExecutor(journal) { 2_000 }
+        var clock = 2_000L
+        val executor = ActionExecutor(journal) { clock }
         var writes = 0
         val result = executor.execute(action, observation, approval, { gate }, { writes++ }, {
+            clock = 2_300L
             throw java.io.IOException("Evidence unavailable")
         })
         assertEquals(ExecutionResult.Uncertain, result)
+        assertEquals(ActionFailure.VERIFICATION_FAILED, journal.records.last().failure)
+        assertEquals(300L, journal.records.last().elapsedMillis)
         assertTrue(journal.records.none { it.state == DispatchState.VERIFIED })
         assertTrue(
             executor.execute(action.copy(id = "retry"), observation, approval, { gate }, { writes++ }, {

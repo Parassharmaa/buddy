@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.buddy.core.ActionExecutor
+import dev.buddy.core.ActionRecord
 import dev.buddy.core.Approval
 import dev.buddy.core.DispatchGate
 import dev.buddy.core.ExecutionResult
@@ -144,8 +145,18 @@ class FixtureWorkspaceDeviceTest {
                             )
                             stage = "approve_fixture_send"
                             val sendResult = workspace.execute(send, approval, gate = { gate() })
-                            assertTrue("Send execution: $sendResult", sendResult is ExecutionResult.Verified)
-                            (sendResult as ExecutionResult.Verified).evidenceIds.forEach { id ->
+                            if (sendResult !is ExecutionResult.Verified) {
+                                val saved = store.get("action:${action.id}")?.let {
+                                    Json.decodeFromString<ActionRecord>(it)
+                                }
+                                val remaining = bootstrap.helper.capabilities().getLong("authorizationDeadline") -
+                                    SystemClock.elapsedRealtime()
+                                throw AssertionError(
+                                    "Send execution: $sendResult; failure=${saved?.failure}; " +
+                                        "elapsedMs=${saved?.elapsedMillis}; authRemainingMs=$remaining"
+                                )
+                            }
+                            sendResult.evidenceIds.forEach { id ->
                                 assertNotNull(store.get("evidence:$id"))
                             }
                             assertEquals("consumed", store.get("consumed:${approval.id}"))
