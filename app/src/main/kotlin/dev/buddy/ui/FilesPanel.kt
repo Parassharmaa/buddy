@@ -49,7 +49,7 @@ import dev.buddy.storage.WorkspaceArtifact
     }
     val busy = state.active || state.importing || state.exporting
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row {
+        FlowRow {
             TextButton(onClick = {
                 documents.launch(arrayOf("text/plain", "text/markdown", "application/json", "application/pdf"))
             }, enabled = !busy) { Text("Add document") }

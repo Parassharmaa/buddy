@@ -165,7 +165,7 @@ import dev.buddy.storage.HistoryRetention
             "Privacy" -> {
                 Text("Your provider: " + if (state.configured) state.modelBase else "Not configured")
                 Text(
-                    "Model keys, conversations and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
+                    "Model keys, conversations, files and action records are encrypted using a key in Android Keystore. Backups and telemetry are disabled. Screenshots are not retained. General phone observation is disabled in this development build."
                 )
                 Text(
                     "Local deletion does not delete copies retained by your model provider or Android’s paired debugging identity."

@@ -13,7 +13,7 @@ import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.model.ModelClient
 import dev.buddy.files.DocumentAccess
-import dev.buddy.storage.ArtifactReadBudget
+import dev.buddy.files.FileWorkspaceController
 import dev.buddy.storage.EncryptedStore
 import dev.buddy.storage.HistoryRetention
 import dev.buddy.storage.WorkspaceArtifact
@@ -21,8 +21,6 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -65,9 +63,9 @@ class BuddyViewModel(
     private var modelJob: Job? = null
     private var modelTestJob: Job? = null
     private var loadingJob: Job? = null
-    private var fileJob: Job? = null
     private var epoch = 0
     private val persistence = Mutex()
+    private val files = FileWorkspaceController(store, documents, viewModelScope, _state, persistence)
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
@@ -373,19 +371,15 @@ class BuddyViewModel(
 
     fun newChat() {
         if (_state.value.active || _state.value.importing || _state.value.exporting) return
-        fileJob?.cancel()
+        files.cancel()
         _state.update { it.copy(conversation = newConversation(), draft = "", error = null, artifacts = emptyList()) }
     }
     fun openConversation(id: String) {
         if (_state.value.active || _state.value.importing || _state.value.exporting) return
-        fileJob?.cancel()
+        files.cancel()
         val saved = _state.value.history.firstOrNull { it.id == id } ?: return
         _state.update { it.copy(conversation = saved, draft = "", error = null, artifacts = emptyList()) }
-        fileJob = viewModelScope.launch {
-            runCatching { store.artifacts.list(id) }.onSuccess { files ->
-                _state.update { if (it.conversation.id == id) it.copy(artifacts = files) else it }
-            }
-        }
+        files.open(id)
     }
     fun setHistoryRetention(retention: HistoryRetention) {
         if (!_state.value.loaded || _state.value.active || _state.value.importing || _state.value.exporting) return
@@ -402,9 +396,7 @@ class BuddyViewModel(
     }
     fun deleteAll() {
         if (!_state.value.loaded) return
-        val pendingFiles = fileJob
-        fileJob = null
-        pendingFiles?.cancel()
+        val pendingFiles = files.cancel()
         val pendingModel = stopModel(persistRecord = false)
         val pendingLoad = loadingJob
         loadingJob = null
@@ -439,101 +431,12 @@ class BuddyViewModel(
             loadRecords()
         }
     }
-    fun importDocument(uri: Uri) {
-        val reader = documents ?: return
-        if (!_state.value.loaded || _state.value.active || fileJob?.isActive == true) return
-        val conversation = _state.value.conversation
-        _state.update { it.copy(importing = true, error = null) }
-        fileJob = viewModelScope.launch {
-            try {
-                val selected = reader.read(uri)
-                try {
-                    val saved = conversation.copy(
-                        title = if (conversation.messages.isEmpty()) "Files" else conversation.title
-                    )
-                    persistence.withLock {
-                        store.put("conversation:${saved.id}", "conversation", json.encodeToString(saved))
-                    }
-                    store.artifacts.importFile(saved.id, selected.name, selected.mimeType, uri, selected.bytes)
-                    val files = store.artifacts.list(saved.id)
-                    currentCoroutineContext().ensureActive()
-                    _state.update {
-                        if (it.conversation.id ==
-                            saved.id
-                        ) {
-                            it.copy(conversation = saved, artifacts = files)
-                        } else {
-                            it
-                        }
-                    }
-                } finally {
-                    selected.bytes.fill(0)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                _state.update {
-                    it.copy(error = "This file could not be imported. Use a supported document or image up to 8 MiB.")
-                }
-            } finally {
-                _state.update { it.copy(importing = false) }
-            }
-        }
-    }
-
+    fun importDocument(uri: Uri) = files.importDocument(uri)
     fun cancelFileOperation() {
-        fileJob?.cancel()
+        files.cancel()
     }
-
-    fun removeArtifact(id: String) {
-        if (fileJob?.isActive == true || !_state.value.loaded || _state.value.active) return
-        val workspace = _state.value.conversation.id
-        if (_state.value.artifacts.none { it.id == id }) return
-        _state.update { it.copy(importing = true) }
-        fileJob = viewModelScope.launch {
-            try {
-                store.artifacts.delete(workspace, id)
-                val files = store.artifacts.list(workspace)
-                _state.update { if (it.conversation.id == workspace) it.copy(artifacts = files) else it }
-            } catch (
-                cancelled: CancellationException
-            ) {
-                throw cancelled
-            } catch (
-                _: Exception
-            ) {
-                fileError("This file could not be removed. Try again.")
-            } finally {
-                _state.update { it.copy(importing = false) }
-            }
-        }
-    }
-
-    fun exportArtifact(id: String, destination: Uri) {
-        val writer = documents ?: return
-        if (fileJob?.isActive == true || !_state.value.loaded || _state.value.active) return
-        val workspace = _state.value.conversation.id
-        if (_state.value.artifacts.none { it.id == id }) return
-        _state.update { it.copy(exporting = true, error = null) }
-        fileJob = viewModelScope.launch {
-            try {
-                val bytes = store.artifacts.read(workspace, id, ArtifactReadBudget())
-                try {
-                    writer.write(destination, bytes)
-                } finally {
-                    bytes.fill(0)
-                }
-            } catch (cancelled: CancellationException) {
-                fileError("Export interrupted. The destination may contain a partial file.")
-                throw cancelled
-            } catch (_: Exception) {
-                fileError("Export failed. The destination may contain a partial file; check it before trying again.")
-            } finally {
-                _state.update { it.copy(exporting = false) }
-            }
-        }
-    }
-
+    fun removeArtifact(id: String) = files.removeArtifact(id)
+    fun exportArtifact(id: String, destination: Uri) = files.exportArtifact(id, destination)
     fun fileError(message: String) {
         _state.update { it.copy(error = message) }
     }

@@ -59,9 +59,17 @@ class ArtifactProvider : ContentProvider() {
         require(selection == null && selectionArgs == null && sortOrder == null)
         val artifact = metadata(uri)
         val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
-        require(columns.size in 1..2 && columns.all { it in setOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE) })
+        require(columns.size in 1..16 && columns.all { it.length in 1..64 })
         return MatrixCursor(columns).apply {
-            addRow(columns.map { if (it == OpenableColumns.DISPLAY_NAME) artifact.displayName else artifact.bytes })
+            addRow(
+                columns.map {
+                    when (it) {
+                        OpenableColumns.DISPLAY_NAME -> artifact.displayName
+                        OpenableColumns.SIZE -> artifact.bytes
+                        else -> null
+                    }
+                }
+            )
         }
     }
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {

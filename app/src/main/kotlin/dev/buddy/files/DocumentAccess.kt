@@ -34,8 +34,11 @@ class DocumentAccess(context: Context) {
             signal
         )?.use {
             require(it.moveToFirst())
-            name = it.getString(0)
-            if (!it.isNull(1)) require(it.getLong(1) in 1..WorkspaceArtifacts.MAX_FILE_BYTES)
+            name = it.getString(it.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            val sizeColumn = it.getColumnIndex(OpenableColumns.SIZE)
+            if (sizeColumn >= 0 && !it.isNull(sizeColumn)) {
+                require(it.getLong(sizeColumn) in -1..WorkspaceArtifacts.MAX_FILE_BYTES.toLong())
+            }
         }
         val displayName = requireNotNull(name)
         require(displayName.length in 1..128)
