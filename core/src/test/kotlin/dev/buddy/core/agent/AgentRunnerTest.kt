@@ -99,8 +99,17 @@ class AgentRunnerTest {
         tools: List<AgentTool> = listOf(tool()),
         saved: MutableList<AgentCheckpoint> = mutableListOf(),
         verify: suspend (String, List<String>) -> Boolean = { _, _ -> true },
+        retained: MutableList<Observation> = mutableListOf(),
         clock: () -> Long = { 0 }
-    ) = AgentRunner(model, tools, ObservationPrivacyGate(emptySet()), verify, { saved += it }, now = clock)
+    ) = AgentRunner(
+        model,
+        tools,
+        ObservationPrivacyGate(emptySet()),
+        verify,
+        { saved += it },
+        { retained += it },
+        now = clock
+    )
 
     @Test fun completionRequiresObservedEvidenceAndHostVerification() = runTest {
         val model = Model { if (it == 0) calls("observe") else finish() }
@@ -299,5 +308,87 @@ class AgentRunnerTest {
         val blocked = runner(Model { calls("observe") }, listOf(misdeclared)).run(request, config)
         assertEquals(RunState.BLOCKED, blocked.run.state)
         assertEquals(0, writes)
+    }
+
+    @Test fun repeatedToolCallIdsCannotDispatchAgain() = runTest {
+        var writes = 0
+        val response = calls("draft")
+        val write = tool("draft", Effect.DRAFT) {
+            AgentInvocation.Action(action) {
+                writes++
+                ExecutionResult.Verified(listOf("e1"))
+            }
+        }
+        val model = Model { response }
+        val result = runner(model, listOf(write)).run(request, config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertEquals(2, model.calls)
+        assertEquals(1, writes)
+    }
+
+    @Test fun sourceIdsCannotBeReboundToDifferentObservationContent() = runTest {
+        var reads = 0
+        val retained = mutableListOf<Observation>()
+        val read = tool {
+            AgentInvocation.Read {
+                if (reads++ == 0) observation else observation.copy(fingerprint = "changed")
+            }
+        }
+        val result = runner(Model { calls("observe") }, listOf(read), retained = retained).run(request, config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertEquals(listOf(observation), retained)
+        assertEquals(listOf("o1"), result.run.evidenceIds)
+        assertTrue(result.messages.none { it.role == "tool" && it.content.orEmpty().contains("changed") })
+    }
+
+    @Test fun knownEvidenceStillRequiresTheHostToVerifyCompletion() = runTest {
+        var checks = 0
+        val model = Model { if (it == 0) calls("observe") else finish() }
+        val result = runner(model, verify = { _, _ ->
+            checks++
+            false
+        }).run(request, config)
+        assertEquals(RunState.BLOCKED, result.run.state)
+        assertEquals(3, checks)
+    }
+
+    @Test fun contextCompactionKeepsTheGoalAndEvidenceWhileBoundingModelRequests() = runTest {
+        var reads = 0
+        val retained = mutableListOf<Observation>()
+        val read = tool {
+            AgentInvocation.Read {
+                reads++
+                observation.copy(
+                    id = "o$reads",
+                    fingerprint = "fp$reads",
+                    nodes = listOf(observation.nodes.single().copy(label = "x".repeat(1000)))
+                )
+            }
+        }
+        val model = Model { if (it < 6) calls("observe") else finish("o6") }
+        val result = runner(model, listOf(read), retained = retained).run(
+            request,
+            config,
+            limits = AgentLimits(modelRequests = 8, contextBytes = 8192)
+        )
+        assertEquals(RunState.DONE, result.run.state)
+        assertEquals(6, retained.size)
+        assertTrue(result.compactedObservations > 0)
+        assertTrue(
+            model.requests.all {
+                it.any { message -> message.role == "user" && message.content == request.request }
+            }
+        )
+        assertEquals((1..6).map { "o$it" }, result.run.evidenceIds)
+    }
+
+    @Test fun checkpointsKeepModelAndBudgetsWithoutRetainingTheApiKey() = runTest {
+        val secret = "PRIVATE_FIXTURE_API_KEY"
+        val limits = AgentLimits(modelRequests = 2, activeMillis = 1000, tokens = 50_000)
+        val result = runner(Model { finish("invented") }).run(request, config.copy(apiKey = secret), limits = limits)
+        val encoded = Json.encodeToString(AgentCheckpoint.serializer(), result)
+        assertFalse(encoded.contains(secret))
+        assertEquals(AgentModelIdentity(config.baseUrl, config.model, false), result.model)
+        assertEquals(limits, result.limits)
     }
 }

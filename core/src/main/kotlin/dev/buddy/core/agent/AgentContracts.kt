@@ -11,6 +11,7 @@ import dev.buddy.core.RunState
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
+@Serializable
 data class AgentLimits(
     val modelRequests: Int = 60,
     val activeMillis: Long = 10 * 60 * 1000,
@@ -25,9 +26,14 @@ data class AgentLimits(
 }
 
 @Serializable
+data class AgentModelIdentity(val endpoint: String, val model: String, val localHttp: Boolean)
+
+@Serializable
 data class AgentCheckpoint(
     val run: RunRecord,
     val messages: List<ChatMessage>,
+    val limits: AgentLimits = AgentLimits(),
+    val model: AgentModelIdentity? = null,
     val modelRequests: Int = 0,
     val confirmedTokens: Long = 0,
     val estimatedTokens: Long = 0,
@@ -35,6 +41,7 @@ data class AgentCheckpoint(
     val activeMillis: Long = 0,
     val retries: Int = 0,
     val retryWaitMillis: Long = 0,
+    val compactedObservations: Int = 0,
     val pendingAction: ActionProposal? = null
 ) {
     override fun toString(): String = "AgentCheckpoint(redacted)"

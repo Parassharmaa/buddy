@@ -15,6 +15,7 @@ import dev.buddy.core.RunRecord
 import dev.buddy.core.RunState
 import dev.buddy.core.ToolCall
 import dev.buddy.core.model.ChatModel
+import dev.buddy.core.sha256
 import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -42,6 +43,7 @@ class AgentRunner(
     private val privacy: ObservationPrivacyGate,
     private val verifyCompletion: suspend (String, List<String>) -> Boolean,
     private val persist: suspend (AgentCheckpoint) -> Unit,
+    private val retainObservation: suspend (Observation) -> Unit,
     private val approvalFor: (dev.buddy.core.ActionProposal) -> Approval? = { null },
     private val now: () -> Long = { System.nanoTime() / 1_000_000 }
 ) {
@@ -112,7 +114,12 @@ class AgentRunner(
     ): AgentCheckpoint {
         require(request.state in setOf(RunState.QUEUED, RunState.PREPARING))
         require(request.request.isNotBlank() && request.request.length <= 8192)
-        require(history.all { it.role in setOf("user", "assistant") && it.toolCalls.isNullOrEmpty() })
+        require(
+            history.all {
+                it.role in setOf("user", "assistant") && it.toolCalls.isNullOrEmpty() &&
+                    it.toolCallId == null
+            }
+        )
         check(lock.tryLock()) { "An agent run is already active" }
         try {
             return Session(request, config, history, limits).execute()
@@ -130,10 +137,13 @@ class AgentRunner(
         private val started = now()
         private var checkpoint = AgentCheckpoint(
             request,
-            listOf(ChatMessage("system", SYSTEM)) + history + ChatMessage("user", request.request)
+            listOf(ChatMessage("system", SYSTEM)) + history + ChatMessage("user", request.request),
+            limits = limits
         )
         private val evidence = linkedSetOf<String>()
         private val pendingCalls = linkedSetOf<String>()
+        private val seenCalls = hashSetOf<String>()
+        private val observationDigests = hashMapOf<String, String>()
         private var errors = 0
         private var lastRead: String? = null
         private var repeatedReads = 0
@@ -188,6 +198,15 @@ class AgentRunner(
                 )
 
                 is FilteredObservation.Allowed -> {
+                    require(observation.id.isNotBlank() && observation.id.length <= 128)
+                    val digest = sha256(json.encodeToString(Observation.serializer(), observation))
+                    val previous = observationDigests[observation.id]
+                    require(previous == null || previous == digest) { "Observation IDs are immutable" }
+                    if (previous == null) {
+                        require(observation.id !in evidence)
+                        retainObservation(observation)
+                        observationDigests[observation.id] = digest
+                    }
                     evidence += observation.id
                     val key = observation.app + ":" + observation.fingerprint
                     repeatedReads = if (key == lastRead) repeatedReads + 1 else 1
@@ -321,8 +340,11 @@ class AgentRunner(
         suspend fun execute(): AgentCheckpoint {
             try {
                 try {
-                    ModelEndpoint.parse(config.baseUrl, config.localHttp)
+                    val endpoint = ModelEndpoint.parse(config.baseUrl, config.localHttp)
                     require(config.model.isNotBlank() && config.model.length <= 200)
+                    checkpoint = checkpoint.copy(
+                        model = AgentModelIdentity(endpoint.uri.toString(), config.model, config.localHttp)
+                    )
                 } catch (_: Exception) {
                     return finish(RunState.BLOCKED, "Check the model configuration")
                 }
@@ -333,6 +355,13 @@ class AgentRunner(
                         (limits.tokens != null && usage() >= limits.tokens)
                     ) {
                         return finish(RunState.PARTIAL, "Run budget reached; no further action was dispatched")
+                    }
+                    if (bytes(checkpoint.messages) >= limits.contextBytes * 3 / 4) {
+                        val compacted = ObservationCompactor.compact(checkpoint.messages)
+                        checkpoint = checkpoint.copy(
+                            messages = compacted.messages,
+                            compactedObservations = checkpoint.compactedObservations + compacted.count
+                        )
                     }
                     val requestBytes = bytes(checkpoint.messages)
                     if (requestBytes > limits.contextBytes) {
@@ -394,7 +423,7 @@ class AgentRunner(
                     if (response.message.role != "assistant" || calls.size > 16 ||
                         calls.map { it.id }.distinct().size != calls.size ||
                         calls.any {
-                            it.type != "function" || it.id.isBlank() || it.id.length > 128 ||
+                            it.type != "function" || it.id.isBlank() || it.id.length > 128 || it.id in seenCalls ||
                                 !it.function.name.matches(Regex("[a-z][a-z0-9_]{0,63}"))
                         } ||
                         response.message.content.orEmpty().length + calls.sumOf { it.function.arguments.length } >
@@ -404,6 +433,7 @@ class AgentRunner(
                     }
                     checkpoint = checkpoint.copy(messages = checkpoint.messages + response.message)
                     if (calls.isEmpty()) return finish(RunState.PARTIAL, "The model supplied no verifiable completion")
+                    seenCalls += calls.map { it.id }
                     pendingCalls += calls.map { it.id }
                     if (response.finishReason != "tool_calls") {
                         return finish(RunState.BLOCKED, "Incomplete tool response; no action from it was dispatched")

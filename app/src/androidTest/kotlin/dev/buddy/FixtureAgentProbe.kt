@@ -103,6 +103,7 @@ internal object FixtureAgentProbe {
                     workspace.observe().nodes.any { it.editable && it.label == text }
             },
             persist = { store.put("agent:$runId", "agent-checkpoint", Json.encodeToString(it)) },
+            retainObservation = { store.put("evidence:${it.id}", "evidence", Json.encodeToString(it)) },
             now = SystemClock::elapsedRealtime
         )
         val result = runner.run(
