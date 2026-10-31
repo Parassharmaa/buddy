@@ -38,7 +38,8 @@ for module, minimum in {"pairing-native": 2, "adb": 1, "storage": 3, "fixture": 
         raise SystemExit(f"Missing compiled fixture tests in {module}; expected at least {minimum}")
 destination = Path("build/device-test-manifest.json")
 destination.parent.mkdir(parents=True, exist_ok=True)
-destination.write_text(json.dumps({"schema": 1, "modules": {module: sorted(cases) for module, cases in manifest.items()}}, indent=2) + "\n")
-fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+payload = {"schema": 1, "modules": {module: sorted(manifest[module]) for module in sorted(manifest)}}
+destination.write_text(json.dumps(payload, indent=2) + "\n")
+fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 print(f"Device test manifest SHA256: {fingerprint}")
 print(f"{count} instrumentation test methods have valid JUnit signatures")
