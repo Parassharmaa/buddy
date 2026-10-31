@@ -274,21 +274,26 @@ class WebSession(context: Context) : WebPort {
         closeView(clearCache = !completeDeletion)
         val storage = WebStorage.getInstance()
         withTimeoutOrNull(15_000) {
-            suspendCancellableCoroutine<Unit> { continuation ->
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+                suspendCancellableCoroutine<Unit> { continuation ->
                     WebStorageCompat.deleteBrowsingData(storage, application.mainExecutor) {
                         if (continuation.isActive) continuation.resume(Unit)
                     }
-                } else {
-                    storage.deleteAllData()
-                    CookieManager.getInstance().removeAllCookies {
-                        if (continuation.isActive) continuation.resume(Unit)
-                    }
+                }
+            } else {
+                storage.deleteAllData()
+            }
+            // Complete the cookie store's own asynchronous deletion after profile deletion.
+            val cookies = CookieManager.getInstance()
+            suspendCancellableCoroutine<Unit> { continuation ->
+                cookies.removeAllCookies {
+                    if (continuation.isActive) continuation.resume(Unit)
                 }
             }
+            check(!cookies.hasCookies()) { "Website cookies remain after cleanup" }
         } ?: error("Website data cleanup incomplete")
-        check(!CookieManager.getInstance().hasCookies())
     }
+
     fun close() = closeView(clearCache = true)
     private fun closeView(clearCache: Boolean) {
         mainThread()
