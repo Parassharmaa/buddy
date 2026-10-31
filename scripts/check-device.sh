@@ -64,14 +64,23 @@ if [[ -n "${BUDDY_EXPECTED_PAGE_SIZE:-}" && "$device_page_size" != "$BUDDY_EXPEC
     exit 1
 fi
 prepare_device
+report_failed_processes() {
+    local previous_pid="$1" current_pid
+    current_pid="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || current_pid=''
+    if [[ "$previous_pid" =~ ^[0-9]+$ && "$current_pid" =~ ^[0-9]+$ && "$previous_pid" != "$current_pid" ]]; then
+        echo 'Android framework process restarted during instrumentation.'
+    fi
+    python3 scripts/report-device-exits.py
+}
 device_gradle_args=(--no-daemon --no-parallel --max-workers=2 --continue
     -Pkotlin.compiler.execution.strategy=in-process
     -Pandroid.testInstrumentationRunnerArguments.buddyPairingFixture=true
     -Pandroid.testInstrumentationRunnerArguments.timeout_msec=60000)
 device_result=0
+framework_pid_before="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || framework_pid_before=''
 if ! ./gradlew "${device_gradle_args[@]}" :pairing-native:connectedDebugAndroidTest :adb:connectedDebugAndroidTest :storage:connectedDebugAndroidTest :fixture:connectedDebugAndroidTest; then
     device_result=1
-    python3 scripts/report-device-exits.py
+    report_failed_processes "$framework_pid_before"
 fi
 # AGP owns installation/cleanup of each instrumentation target. Install the final
 # rebuilt fixture after its own suite, before the independent Buddy suite.
@@ -84,8 +93,9 @@ if (( $(adb shell getprop ro.build.version.sdk | tr -d '\r') >= 37 )); then
     adb shell pm grant dev.buddy android.permission.ACCESS_LOCAL_NETWORK
 fi
 prepare_device
+framework_pid_before="$(timeout 5 adb shell pidof system_server 2>/dev/null | tr -d '\r')" || framework_pid_before=''
 if ! ./gradlew "${device_gradle_args[@]}" :app:connectedDebugAndroidTest; then
     device_result=1
-    python3 scripts/report-device-exits.py
+    report_failed_processes "$framework_pid_before"
 fi
 exit "$device_result"
