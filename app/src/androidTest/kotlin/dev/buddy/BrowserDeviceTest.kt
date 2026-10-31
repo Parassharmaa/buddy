@@ -64,7 +64,10 @@ class BrowserDeviceTest {
                             }
                             val content = when (path.substringBefore('?')) {
                                 "/upload" ->
-                                    "<input id='upload' type='file' accept='.txt' style='width:240px;height:80px'>" +
+                                    "<button id='pick' style='width:240px;height:80px' " +
+                                        "onclick=\"document.getElementById('upload').click()\">" +
+                                        "Choose synthetic file</button>" +
+                                        "<input id='upload' type='file' accept='.txt'>" +
                                         "<script>window.uploadResults=[];" +
                                         "document.getElementById('upload').addEventListener('change',function(){" +
                                         "if(!this.files[0])return;const r=new FileReader();" +
@@ -401,11 +404,12 @@ class BrowserDeviceTest {
                     val root = activity.findViewById<android.view.View>(android.R.id.content) as android.view.ViewGroup
                     root.getChildAt(0) as android.webkit.WebView
                 }
+                var stage = "FIRST_CHOOSER"
                 suspend fun choose() {
                     // Fresh bounds from our fixed fixture produce a real user gesture, not an input replay.
                     val encoded = script(
                         view,
-                        "(function(){const r=document.getElementById('upload').getBoundingClientRect();" +
+                        "(function(){const r=document.getElementById('pick').getBoundingClientRect();" +
                             "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,innerWidth]);})()"
                     )
                     val bounds = Json.parseToJsonElement(
@@ -426,28 +430,37 @@ class BrowserDeviceTest {
                             InstrumentationRegistry.getInstrumentation()
                         ).click(point.first, point.second)
                     )
-                    withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
+                    try {
+                        withTimeout(5_000) { activity.session.state.first { it.hasUploadRequest } }
+                    } catch (failure: Exception) {
+                        throw AssertionError("Upload chooser did not open at $stage", failure)
+                    }
                 }
                 choose()
                 withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(unapproved)) }
                 withTimeout(2_000) { activity.session.state.first { !it.hasUploadRequest } }
+                stage = "SECOND_CHOOSER"
                 choose()
                 val uri = android.net.Uri.Builder().scheme("content").authority(activity.packageName + ".artifacts")
                     .appendPath(workspace).appendPath(artifact.id).build()
                 withContext(Dispatchers.Main) { activity.session.chooseFiles(listOf(uri)) }
-                withTimeout(5_000) {
-                    while (true) {
-                        val values = Json.parseToJsonElement(
-                            Json.parseToJsonElement(
-                                script(view, "JSON.stringify(window.uploadResults)")
-                            ).jsonPrimitive.content
-                        ).jsonArray
-                        if (values.isNotEmpty()) {
-                            assertEquals(listOf(approved), values.map { it.jsonPrimitive.content })
-                            break
+                try {
+                    withTimeout(5_000) {
+                        while (true) {
+                            val values = Json.parseToJsonElement(
+                                Json.parseToJsonElement(
+                                    script(view, "JSON.stringify(window.uploadResults)")
+                                ).jsonPrimitive.content
+                            ).jsonArray
+                            if (values.isNotEmpty()) {
+                                assertEquals(listOf(approved), values.map { it.jsonPrimitive.content })
+                                break
+                            }
+                            delay(20)
                         }
-                        delay(20)
                     }
+                } catch (failure: Exception) {
+                    throw AssertionError("Approved upload did not produce readable fixture bytes", failure)
                 }
                 assertEquals(WebReadResult.Suppressed(WebReadStatus.PRIVATE), activity.session.observe(pages.origin))
             } finally {
